@@ -58,6 +58,7 @@ class GameHookMapperClient {
     _connectionString
     _signalrClient
     _properties
+    _propertiesMap
 
     meta
     properties
@@ -107,12 +108,13 @@ class GameHookMapperClient {
     _deconstructMapper() {
         this.meta = null
         this._properties = null
+        this._propertiesMap = null
         this.properties = null
         this.glossary = null
     }
 
     get(path) {
-        return this._properties.find(x => x.path === path)
+        return that._propertiesMap.get(path)
     }
 
     async loadMapper() {
@@ -158,6 +160,9 @@ class GameHookMapperClient {
         this.properties = {}
         this._properties = mapper.properties.map(x => new GameHookProperty(this, x))
         this._properties.forEach(x => assign(this.properties, x.path.split('.'), x))
+
+        this._propertiesMap = new Map()
+        this._properties.forEach(x => this._propertiesMap.set(x.path, x))
 
         setTimeout(() => this.loadMapper(), this._options.automaticRefreshMapperTimeMinutes * 60000)
 
@@ -213,7 +218,7 @@ class GameHookMapperClient {
         this._signalrClient.on('PropertiesChanged', (propertiesChanged) => {
             if (that._properties && that._properties.length > 0) {
                 for (const propertyChanged of propertiesChanged) {
-                    let property = that._properties.find(x => x.path === propertyChanged.path)
+                    let property = that._propertiesMap.get(propertyChanged.path)
                     if (!property) {
                         console.warn(`[GameHook Client] Could not find a related property in PropertyUpdated event for: ${propertyChanged.path}`)
                         return
