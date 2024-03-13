@@ -67,8 +67,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
       with:
-        tag_name: ${{ env.CURRENT_TIMESTAMP }}
-        release_name: Release ${{ env.CURRENT_TIMESTAMP }}
+        tag_name: ${{ needs.release.outputs.release_tag_name }}
+        release_name: Release ${{ needs.release.outputs.release_tag_name }}
         draft: false
         prerelease: ${{ github.event.inputs.prerelease }}
         owner: roydmerkel
