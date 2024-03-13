@@ -27,7 +27,7 @@ jobs:
       id: get_latest_commit
       uses: actions/github-script@v6
       with:
-        github-token: ${{secrets.GITHUB_TOKEN}}
+        github-token: ${{secrets.ACCESS_TOKEN}}
         script: |
           const repo = { owner: 'roydmerkel', repo: 'gamehook_mappers' };
 
@@ -43,7 +43,7 @@ jobs:
       id: create_release
       uses: actions/create-release@v1
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
       with:
         tag_name: ${{ env.CURRENT_TIMESTAMP }}
         release_name: Release ${{ env.CURRENT_TIMESTAMP }}
@@ -143,7 +143,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
         with:
           files: |
             ./GameHook-*.zip
