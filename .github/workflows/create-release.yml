@@ -55,6 +55,12 @@ jobs:
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
 
+  release-mappers:
+    name: Create New Mappers Release
+    runs-on: ubuntu-latest
+    needs:
+      - release
+    steps:
     - name: Create Mappers Release
       id: create_release
       uses: actions/create-release@v1
@@ -69,7 +75,7 @@ jobs:
         repo: gamehook_mappers
         body: |
           Changes:
-          - Mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
+          - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
 
   build-and-upload:
     name: Build and Upload Assets
