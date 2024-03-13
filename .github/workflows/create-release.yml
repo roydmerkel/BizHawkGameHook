@@ -23,13 +23,13 @@ jobs:
     - name: Get current timestamp
       run: echo "CURRENT_TIMESTAMP=$(date +'%Y.%-m.%-d.%H%M')" >> $GITHUB_ENV
 
-    - name: Get latest commit hash from gamehook-io/mappers
+    - name: Get latest commit hash from roydmerkel/gamehook_mappers
       id: get_latest_commit
       uses: actions/github-script@v6
       with:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
-          const repo = { owner: 'gamehook-io', repo: 'mappers' };
+          const repo = { owner: 'roydmerkel', repo: 'gamehook_mappers' };
 
           const response = await github.rest.repos.getCommit({
             owner: repo.owner,
@@ -163,4 +163,4 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_APP_UPDATES_WEBHOOK }}
         uses: Ilshidur/action-discord@master
         with:
-          args: 'A new version of GameHook has been released. Version ${{ needs.release.outputs.release_tag_name }} is now available. <https://github.com/gamehook-io/gamehook/releases/tag/${{ needs.release.outputs.release_tag_name }}>'
+          args: 'A new version of GameHook has been released. Version ${{ needs.release.outputs.release_tag_name }} is now available. <https://github.com/roydmerkel/BizHawkGameHook/releases/tag/${{ needs.release.outputs.release_tag_name }}>'
