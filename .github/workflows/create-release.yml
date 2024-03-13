@@ -96,6 +96,7 @@ jobs:
           fi
 
           # Update MAPPER_VERSION
+          echo "MAPPER_VERSION: \"$MAPPER_COMMIT\""
           jq --arg MAPPER_COMMIT "$MAPPER_COMMIT" '.MAPPER_VERSION = $MAPPER_COMMIT' ./src/GameHook.WebAPI/appsettings.json > ./src/GameHook.WebAPI/appsettings.json.tmp && mv ./src/GameHook.WebAPI/appsettings.json.tmp ./src/GameHook.WebAPI/appsettings.json
       
       - name: Setup .NET Core SDK
