@@ -65,6 +65,13 @@ jobs:
       release_tag_name: ${{ needs.release.outputs.release_tag_name }}
       release_id: ${{ needs.release.outputs.release_id }}
     steps:
+    - name: Use Release Outputs
+      shell: bash
+      run: |
+        echo "Mapper Commit Hash: ${{ needs.release.outputs.mapper_commit_hash }}"
+        echo "Release Tag Name: ${{ needs.release.outputs.release_tag_name }}"
+        echo "Release ID: ${{ needs.release.outputs.release_id }}"
+
     - name: Create Mappers Release
       id: create_release
       uses: actions/create-release@v1
