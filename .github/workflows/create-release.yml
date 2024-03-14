@@ -96,7 +96,7 @@ jobs:
             target: osx-x64
     runs-on: ${{ matrix.os }}
     needs:
-      - release
+      - release-mappers
     steps:
       - name: Use Release Outputs
         shell: bash
