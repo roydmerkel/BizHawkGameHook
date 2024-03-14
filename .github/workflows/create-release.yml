@@ -12,10 +12,6 @@ jobs:
   release:
     name: Create New Release
     runs-on: ubuntu-latest
-    outputs:
-      mapper_commit_hash: ${{ steps.get_latest_commit.outputs.mapper_commit_hash }}
-      release_tag_name: ${{ env.CURRENT_TIMESTAMP }}
-      release_id: ${{ steps.create_release.outputs.id }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
@@ -55,6 +51,12 @@ jobs:
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
 
+    - id: Pass along release outputs.
+      run: |
+        echo "mapper_commit_hash=${{ steps.get_latest_commit.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
+        echo "release_tag_name=${{ env.CURRENT_TIMESTAMP }}" >> "$GITHUB_OUTPUT"
+        echo "release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT"
+
   release-mappers:
     name: Create New Mappers Release
     runs-on: ubuntu-latest
@@ -88,6 +90,12 @@ jobs:
         body: |
           Changes:
           - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
+          
+    - id: Pass along release outputs.
+      run: |
+        echo "mapper_commit_hash=${{ needs.release.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
+        echo "release_tag_name=${{ needs.release.outputs.release_tag_name }}" >> "$GITHUB_OUTPUT"
+        echo "release_id=${{ needs.release.outputs.release_id }}" >> "$GITHUB_OUTPUT"
 
   build-and-upload:
     name: Build and Upload Assets
