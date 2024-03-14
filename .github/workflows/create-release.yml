@@ -12,6 +12,10 @@ jobs:
   release:
     name: Create New Release
     runs-on: ubuntu-latest
+    outputs:
+      mapper_commit_hash: ${{ steps.set_outputs.outputs.mapper_commit_hash }}
+      release_tag_name: ${{ steps.set_outputs.outputs.release_tag_name }}
+      release_id: ${{ steps.set_outputs.outputs.release_id }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
@@ -51,17 +55,12 @@ jobs:
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
 
-    - name: Set Outputs 1
-      id: set_output_1
-      run: echo "mapper_commit_hash=${{ steps.get_latest_commit.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
-      
-    - name: Set Outputs 2
-      id: set_output_2
-      run: echo "release_tag_name=${{ env.CURRENT_TIMESTAMP }}" >> "$GITHUB_OUTPUT"
-      
-    - name: Set Outputs 3
-      id: set_output_3
-      run: echo "release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT"
+    - name: Set Outputs
+      id: set_outputs
+      run: |
+        echo "mapper_commit_hash=${{ steps.get_latest_commit.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
+        echo "release_tag_name=${{ env.CURRENT_TIMESTAMP }}" >> "$GITHUB_OUTPUT"
+        echo "release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT"
 
   release-mappers:
     name: Create New Mappers Release
@@ -69,9 +68,9 @@ jobs:
     needs:
       - release
     outputs:
-      mapper_commit_hash: ${{ needs.release.outputs.mapper_commit_hash }}
-      release_tag_name: ${{ needs.release.outputs.release_tag_name }}
-      release_id: ${{ needs.release.outputs.release_id }}
+      mapper_commit_hash: ${{ steps.set_outputs.outputs.mapper_commit_hash }}
+      release_tag_name: ${{ steps.set_outputs.outputs.release_tag_name }}
+      release_id: ${{ steps.set_outputs.outputs.release_id }}
     steps:
     - name: Use Release Outputs
       shell: bash
@@ -97,17 +96,12 @@ jobs:
           Changes:
           - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
           
-    - name: Set Outputs 1
-      id: set_output_1
-      run: echo "mapper_commit_hash=${{ needs.release.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
-      
-    - name: Set Outputs 2
-      id: set_output_2
-      run: echo "release_tag_name=${{ needs.release.outputs.release_tag_name }}" >> "$GITHUB_OUTPUT"
-      
-    - name: Set Outputs 3
-      id: set_output_3
-      run: echo "release_id=${{ needs.release.outputs.release_id }}" >> "$GITHUB_OUTPUT"
+    - name: Set Outputs
+      id: set_outputs
+      run: |
+        echo "mapper_commit_hash=${{ needs.release.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
+        echo "release_tag_name=${{ needs.release.outputs.release_tag_name }}" >> "$GITHUB_OUTPUT"
+        echo "release_id=${{ needs.release.outputs.release_id }}" >> "$GITHUB_OUTPUT"
 
   build-and-upload:
     name: Build and Upload Assets
