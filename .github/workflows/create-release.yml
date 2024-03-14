@@ -73,6 +73,7 @@ jobs:
         prerelease: ${{ github.event.inputs.prerelease }}
         owner: roydmerkel
         repo: gamehook_mappers
+        commitish: ${{ needs.release.outputs.mapper_commit_hash }}
         body: |
           Changes:
           - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
