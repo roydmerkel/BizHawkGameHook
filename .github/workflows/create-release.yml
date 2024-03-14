@@ -51,7 +51,8 @@ jobs:
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
 
-    - id: Pass along release outputs.
+    - name: Set Outputs
+      id: set_outtputs
       run: |
         echo "mapper_commit_hash=${{ steps.get_latest_commit.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
         echo "release_tag_name=${{ env.CURRENT_TIMESTAMP }}" >> "$GITHUB_OUTPUT"
@@ -91,7 +92,8 @@ jobs:
           Changes:
           - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
           
-    - id: Pass along release outputs.
+    - name: Set Outputs
+      id: set_outtputs
       run: |
         echo "mapper_commit_hash=${{ needs.release.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
         echo "release_tag_name=${{ needs.release.outputs.release_tag_name }}" >> "$GITHUB_OUTPUT"
