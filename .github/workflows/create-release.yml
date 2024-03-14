@@ -13,9 +13,9 @@ jobs:
     name: Create New Release
     runs-on: ubuntu-latest
     outputs:
-      mapper_commit_hash: ${{ steps.set_outputs.outputs.mapper_commit_hash }}
-      release_tag_name: ${{ steps.set_outputs.outputs.release_tag_name }}
-      release_id: ${{ steps.set_outputs.outputs.release_id }}
+      mapper_commit_hash: ${{ steps.get_latest_commit.outputs.mapper_commit_hash }}
+      release_tag_name: ${{ env.CURRENT_TIMESTAMP }}
+      release_id: ${{ steps.create_release.outputs.id }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
@@ -55,22 +55,15 @@ jobs:
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
 
-    - name: Set Outputs
-      id: set_outputs
-      run: |
-        echo "mapper_commit_hash=${{ steps.get_latest_commit.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
-        echo "release_tag_name=${{ env.CURRENT_TIMESTAMP }}" >> "$GITHUB_OUTPUT"
-        echo "release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT"
-
   release-mappers:
     name: Create New Mappers Release
     runs-on: ubuntu-latest
     needs:
       - release
     outputs:
-      mapper_commit_hash: ${{ steps.set_outputs.outputs.mapper_commit_hash }}
-      release_tag_name: ${{ steps.set_outputs.outputs.release_tag_name }}
-      release_id: ${{ steps.set_outputs.outputs.release_id }}
+      mapper_commit_hash: ${{ needs.release.outputs.mapper_commit_hash }}
+      release_tag_name: ${{ needs.release.outputs.release_tag_name }}
+      release_id: ${{ needs.release.outputs.release_id }}
     steps:
     - name: Use Release Outputs
       shell: bash
@@ -95,13 +88,6 @@ jobs:
         body: |
           Changes:
           - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
-          
-    - name: Set Outputs
-      id: set_outputs
-      run: |
-        echo "mapper_commit_hash=${{ needs.release.outputs.mapper_commit_hash }}" >> "$GITHUB_OUTPUT"
-        echo "release_tag_name=${{ needs.release.outputs.release_tag_name }}" >> "$GITHUB_OUTPUT"
-        echo "release_id=${{ needs.release.outputs.release_id }}" >> "$GITHUB_OUTPUT"
 
   build-and-upload:
     name: Build and Upload Assets
@@ -121,6 +107,7 @@ jobs:
             target: osx-x64
     runs-on: ${{ matrix.os }}
     needs:
+      - release
       - release-mappers
     steps:
       - name: Use Release Outputs
@@ -205,6 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - release
+      - release-mappers
       - build-and-upload
     steps:
       - name: Discord Notification
