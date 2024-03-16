@@ -105,9 +105,11 @@ namespace GameHook.Application
                             Value = x.GetOptionalAttributeValue("value"),
                             ReadFunction = x.GetOptionalAttributeValue("read-function"),
                             WriteFunction = x.GetOptionalAttributeValue("write-function"),
-                            AfterReadValueExpression = x.GetOptionalAttributeValue("after-read-value-expression"),
+                            AfterReadValueExpression = x.GetOptionalAttributeValue("after-read-value-expression") ?? x.GetOptionalAttributeValue("postprocessor-reader") ?? x.GetOptionalAttributeValue("postprocessor"),
                             AfterReadValueFunction = x.GetOptionalAttributeValue("after-read-value-function"),
                             BeforeWriteValueFunction = x.GetOptionalAttributeValue("before-write-value-function"),
+                            AfterWriteValueExpression = x.GetOptionalAttributeValue("after-write-value-expression") ?? x.GetOptionalAttributeValue("postprocessor-writer"),
+                            Instantaneous = x.GetOptionalAttributeValueAsBool("instantaneous"),
                         };
 
                         if (type == "binaryCodedDecimal") return new BinaryCodedDecimalProperty(instance, variables);

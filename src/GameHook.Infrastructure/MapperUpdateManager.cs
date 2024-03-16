@@ -116,7 +116,7 @@ namespace GameHook.Infrastructure
                     var httpClient = _httpClientFactory.CreateClient();
                     httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GameHook", BuildEnvironment.AssemblyVersion));
 
-                    var response = await httpClient.GetStringAsync($"https://api.github.com/repos/roydmerkel/gamehook_mappers/commits/main");
+                    var response = await httpClient.GetStringAsync($"https://api.github.com/repos/{_appSettings.MAPPER_UPGRADE_GITHUB_ORG}/{_appSettings.MAPPER_UPGRADE_GITHUB_PROJECT}/commits/{_appSettings.MAPPER_UPGRADE_GITHUB_BRANCH}");
                     var latestCommit = JsonSerializer.Deserialize<LatestCommit>(response)?.sha ?? throw new Exception("Latest mapper sha was not provided.");
 
                     MapperVersion = latestCommit;
@@ -134,7 +134,7 @@ namespace GameHook.Infrastructure
 
                     var httpClient = _httpClientFactory.CreateClient();
 
-                    await DownloadMappers(httpClient, $"https://github.com/roydmerkel/gamehook_mappers/archive/{_appSettings.MAPPER_VERSION}.zip");
+                    await DownloadMappers(httpClient, $"https://github.com/{_appSettings.MAPPER_UPGRADE_GITHUB_ORG}/{_appSettings.MAPPER_UPGRADE_GITHUB_PROJECT}/archive/{_appSettings.MAPPER_VERSION}.zip");
                     await File.WriteAllTextAsync(MapperLocalCommitHashFilePath, _appSettings.MAPPER_VERSION);
 
                     return true;

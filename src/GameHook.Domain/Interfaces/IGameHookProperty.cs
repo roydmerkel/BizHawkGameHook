@@ -22,6 +22,8 @@
         public string? AfterReadValueFunction { get; set; }
 
         public string? BeforeWriteValueFunction { get; set; }
+        public string? AfterWriteValueExpression { get; set; }
+        public bool? Instantaneous { get; set; }
     }
 
     public interface IGameHookProperty

@@ -50,6 +50,14 @@ namespace GameHook.Domain
             {
                 MAPPER_LOCAL_DIRECTORY = localMapperDirectory;
             }
+
+            GAMEHOOK_GITHUB_ORG = configuration["GAMEHOOK_GITHUB_ORG"] ?? $"roydmerkel";
+            GAMEHOOK_GITHUB_PROJECT = configuration["GAMEHOOK_GITHUB_PROJECT"] ?? $"gamehook_mappers";
+            GAMEHOOK_GITHUB_BRANCH = configuration["GAMEHOOK_GITHUB_BRANCH"] ?? $"main";
+
+            MAPPER_UPGRADE_GITHUB_ORG = configuration["MAPPER_UPGRADE_GITHUB_ORG"] ?? $"roydmerkel";
+            MAPPER_UPGRADE_GITHUB_PROJECT = configuration["MAPPER_UPGRADE_GITHUB_PROJECT"] ?? $"gamehook_mappers";
+            MAPPER_UPGRADE_GITHUB_BRANCH = configuration["MAPPER_UPGRADE_GITHUB_BRANCH"] ?? $"main";
         }
 
         public string Urls { get; }
@@ -71,5 +79,17 @@ namespace GameHook.Domain
         public string? MAPPER_LOCAL_DIRECTORY { get; }
 
         public bool LOG_HTTP_TRAFFIC { get; }
+
+        public string GAMEHOOK_GITHUB_ORG { get; }
+
+        public string GAMEHOOK_GITHUB_PROJECT { get; }
+
+        public string GAMEHOOK_GITHUB_BRANCH { get; }
+
+        public string MAPPER_UPGRADE_GITHUB_ORG { get; }
+
+        public string MAPPER_UPGRADE_GITHUB_PROJECT { get; }
+
+        public string MAPPER_UPGRADE_GITHUB_BRANCH { get; }
     }
 }

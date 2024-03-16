@@ -72,7 +72,7 @@ namespace GameHook.Infrastructure
             }
 
             var mappers = new DirectoryInfo(_appSettings.MAPPER_DIRECTORY)
-                .GetFiles("*.xml", SearchOption.AllDirectories)
+                .GetFilesByExtensions(new string[] { "*.xml", "*.yml", "*.yaml" }, SearchOption.AllDirectories)
                 .Select(x => new MapperFilesystemDTO()
                 {
                     Id = GetId(MapperFilesystemTypes.Official, x.FullName),
@@ -90,7 +90,7 @@ namespace GameHook.Infrastructure
                 }
 
                 var localMappers = new DirectoryInfo(_appSettings.MAPPER_LOCAL_DIRECTORY)
-                    .GetFiles("*.xml", SearchOption.AllDirectories)
+                    .GetFilesByExtensions(new string[] { "*.xml", "*.yml", "*.yaml" }, SearchOption.AllDirectories)
                     .Select(x => new MapperFilesystemDTO()
                     {
                         Id = GetId(MapperFilesystemTypes.Local, x.FullName),

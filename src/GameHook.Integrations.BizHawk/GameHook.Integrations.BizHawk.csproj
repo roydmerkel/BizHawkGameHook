@@ -4,9 +4,10 @@
 		<Nullable>enable</Nullable>
 		<TargetFramework>net48</TargetFramework>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	</PropertyGroup>
 	<PropertyGroup Condition=" '$(BIZHAWK_HOME)' == '' ">
-		<BIZHAWK_HOME>$(ProjectDir)../BizHawk/</BIZHAWK_HOME><!-- if building EmuHawk from source, point to e.g. `$(ProjectDir)../BizHawk/output/` -->
+		<BIZHAWK_HOME>$(ProjectDir)../../BizHawk/</BIZHAWK_HOME><!-- if building EmuHawk from source, point to e.g. `$(ProjectDir)../BizHawk/output/` -->
 	</PropertyGroup>
 	<PropertyGroup Condition=" '$(BIZHAWK_DATA_HOME)' == '' ">
 		<BIZHAWK_DATA_HOME>$(BIZHAWK_HOME)</BIZHAWK_DATA_HOME><!-- ignore this; on NixOS these are different dirs -->
@@ -18,8 +19,10 @@
 		</Reference>
 		<Reference Include="System.Windows.Forms" />
 		<Reference Include="BizHawk.Client.Common" HintPath="$(BIZHAWK_HOME)dll/BizHawk.Client.Common.dll" />
+		<Reference Include="BizHawk.Client.EmuHawk" HintPath="$(BIZHAWK_HOME)EmuHawk.exe" />
 		<Reference Include="BizHawk.Common" HintPath="$(BIZHAWK_HOME)dll/BizHawk.Common.dll" />
 		<Reference Include="BizHawk.Emulation.Common" HintPath="$(BIZHAWK_HOME)dll/BizHawk.Emulation.Common.dll" />
+		<Reference Include="BizHawk.Bizware.BizwareGL" HintPath="$(BIZHAWK_HOME)dll/BizHawk.Bizware.BizwareGL.dll" />
 		<Reference Include="BizHawk.WinForms.Controls" HintPath="$(BIZHAWK_HOME)dll/BizHawk.WinForms.Controls.dll" />
 	</ItemGroup>
 </Project>

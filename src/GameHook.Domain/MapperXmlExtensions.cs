@@ -37,6 +37,57 @@ public static class MapperXmlExtensions
     public static int? GetOptionalAttributeValueAsInt(this XElement el, string name) =>
         el.Attribute(name) != null ? int.Parse(el.GetAttributeValue(name)) : null;
 
+    public static bool? GetOptionalAttributeValueAsBool(this XElement el, string name)
+    {
+        XAttribute? xAttribute = el.Attribute(name);
+
+        if(xAttribute != null)
+        {
+            string value = el.GetAttributeValue(name);
+
+            if(value != null)
+            {
+                switch (value.ToLower())
+                {
+                    case "true":
+                    case "yes":
+                    case "t":
+                        return true;
+                    case "false":
+                    case "no":
+                    case "f":
+                        return false;
+                    default:
+                        if (long.TryParse(value, out long lValue))
+                        {
+                            return (lValue != 0);
+                        }
+                        else if (ulong.TryParse(value, out ulong ulValue))
+                        {
+                            return (ulValue != 0);
+                        }
+                        else if (double.TryParse(value, out double dValue))
+                        {
+                            return (dValue != 0.0 && dValue != -0.0);
+                        }
+                        else if (decimal.TryParse(value, out decimal dcValue))
+                        {
+                            return (dcValue != 0.0m && dcValue != -0.0m);
+                        }
+                        throw new FormatException();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
+        }
+    }
+
     public static bool IsArray(this XElement el)
     {
         var childElements = el.Elements().Select(x => x.GetOptionalAttributeValue("name") ?? string.Empty).ToArray();
@@ -70,6 +121,10 @@ public static class MapperXmlExtensions
         {
             return el.GetAttributeValue("name").Replace("-", string.Empty);
         }
+        else if (el.Name.LocalName is "group")
+        {
+            return el.GetAttributeValue("name").Replace("-", string.Empty);
+        }
         else
         {
             return el.Name.LocalName.Replace("-", string.Empty);
@@ -79,6 +134,10 @@ public static class MapperXmlExtensions
     static string? GetElementPathName(this XElement el)
     {
         if (el.Name.LocalName is "class")
+        {
+            return el.GetAttributeValue("name");
+        }
+        else if(el.Name.LocalName is "group")
         {
             return el.GetAttributeValue("name");
         }

@@ -17,15 +17,27 @@ namespace GameHook.WebAPI
 {
     public class Startup
     {
+        public Startup(IConfiguration configuration) 
+        {
+            Configuration = configuration;
+        }
+
+        public IConfiguration Configuration { get; }
+
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddHttpClient();
             services.AddCors();
 
             // Add Swagger
+
             services.AddEndpointsApiExplorer();
             services.AddSwaggerGen(x =>
             {
+                string GAMEHOOK_GITHUB_ORG = Configuration["MAPPER_UPGRADE_GITHUB_ORG"] ?? $"roydmerkel";
+                string GAMEHOOK_GITHUB_PROJECT = Configuration["MAPPER_UPGRADE_GITHUB_PROJECT"] ?? $"gamehook_mappers";
+                string GAMEHOOK_GITHUB_BRANCH = Configuration["GAMEHOOK_GITHUB_BRANCH"] ?? $"main";
+
                 x.DocumentFilter<DefaultSwashbuckleFilter>();
 
                 x.EnableAnnotations();
@@ -48,7 +60,7 @@ namespace GameHook.WebAPI
                     License = new OpenApiLicense
                     {
                         Name = "GNU Affero General Public License v3.0",
-                        Url = new Uri("https://github.com/roydmerkel/BizHawkGameHook/blob/main/LICENSE.txt")
+                        Url = new Uri($"https://github.com/{GAMEHOOK_GITHUB_ORG}/{GAMEHOOK_GITHUB_PROJECT}/blob/{GAMEHOOK_GITHUB_BRANCH}/LICENSE.txt")
                     }
                 });
             });

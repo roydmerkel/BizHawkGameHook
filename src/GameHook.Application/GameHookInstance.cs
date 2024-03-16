@@ -112,6 +112,14 @@ namespace GameHook.Application
                 {
                     Mapper = GameHookMapperXmlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
                 }
+                else if (mapperFile.AbsolutePath.EndsWith(".yml"))
+                {
+                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
+                }
+                else if (mapperFile.AbsolutePath.EndsWith(".yaml"))
+                {
+                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
+                }
                 else
                 {
                     throw new Exception($"Invalid file extension for mapper.");

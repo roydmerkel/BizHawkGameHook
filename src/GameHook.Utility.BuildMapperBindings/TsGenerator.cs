@@ -1,5 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
+using System.Xml.XPath;
 using GameHook.Application;
 using GameHook.Domain;
 
@@ -81,6 +82,27 @@ public static class TsGenerator
                     var attributeType = el.GetAttributeValue("type");
                     return GetTypescriptInterface(attributeType);
                 }
+            case "macro":
+                {
+                    var macroType = el.GetAttributeValue("type");
+                    var macro = el.Document.Root.XPathSelectElements(@$"//macros/{macroType}").FirstOrDefault();
+
+                    var tupleTypes = macro.Elements().Select(x => x.Name.LocalName is "macro" ? x.GetTypescriptType() : "\"" + x.GetElementActualName() + "\":" + x.GetTypescriptType()).ToArray();
+                    return $"{string.Join(',', tupleTypes)}";
+                }
+            case "group":
+                {
+                    if (el.IsArray())
+                    {
+                        var tupleTypes = el.Elements().Select(x => x.GetTypescriptType()).ToArray();
+                        return $"[{string.Join(',', tupleTypes)}]";
+                    }
+                    else
+                    {
+                        var tupleTypes = el.Elements().Select(x => x.Name.LocalName is "macro" ? x.GetTypescriptType() : "\"" + x.GetElementActualName() + "\":" + x.GetTypescriptType()).ToArray();
+                        return $"{{{string.Join(',', tupleTypes)}}}";
+                    }
+                }
             default:
                 throw new Exception($"Cannot get typescript type for element. ${el}");
         }
@@ -157,6 +179,22 @@ public static class TsGenerator
                         $"    {el.GetElementActualName()}{separator} new {el.GetTypescriptType()}(this, '{el.GetElementPath()}'){endingCharacter}");
                 }
 
+                break;
+            case "macro":
+                /*string type = el.GetAttributeValue("type");
+                XElement macro = el.Document.XPathSelectElements($@"//macros/{type}").FirstOrDefault();
+                foreach(var childEl in macro.Elements())
+                {
+                    TransverseProperties(childEl, result);
+                }*/
+                break;
+            case "class":
+                /*string clsType = el.GetAttributeValue("type");
+                XElement clazz = el.Document.XPathSelectElements($@"//classes/{clsType}").FirstOrDefault();
+                foreach (var childEl in clazz.Elements())
+                {
+                    TransverseProperties(childEl, result);
+                }*/
                 break;
             case "script":
                 // result.AppendLine(el.Value);
@@ -273,5 +311,13 @@ public static class TsGenerator
         result.AppendLine("}");
 
         return result.ToString();
+    }
+
+    public static string FromYmlMapper(string contents)
+    {
+        var doc = GameHookMapperYamlFactory.Deserialize(contents);
+        var xmlDoc = GameHookMapperYamlFactory.ConvertYamlToXML(doc);
+
+        return FromMapper(xmlDoc.OuterXml);
     }
 }
