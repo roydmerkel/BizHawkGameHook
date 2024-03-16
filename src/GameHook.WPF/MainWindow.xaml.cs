@@ -204,7 +204,7 @@ namespace GameHook.WPF
 
                 AutoUpdater.CheckForUpdateEvent += AutoUpdaterOnCheckForUpdateEvent;
 
-                AutoUpdater.Start("https://cdn.gamehook.io/GameHookWpf_AutoUpdater.xml");
+                AutoUpdater.Start("https://cdngamehook.merkelhaus.us/GameHookWpf_AutoUpdater.xml");
             }
 
             // Determine if WebView2 is installed.
