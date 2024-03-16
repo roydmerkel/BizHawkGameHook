@@ -169,7 +169,7 @@ namespace GameHook.WPF
                 {
                     MessageBox.Show(
                         @"There was a problem reaching our update server." +
-                        @"For additional assistance please visit our website at https://gamehook.io/",
+                        @"For additional assistance please visit our website at https://gamehook.merkelhaus.us/",
                         @"Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 else
@@ -204,7 +204,7 @@ namespace GameHook.WPF
 
                 AutoUpdater.CheckForUpdateEvent += AutoUpdaterOnCheckForUpdateEvent;
 
-                AutoUpdater.Start("https://cdn.gamehook.io/GameHookWpf_AutoUpdater.xml");
+                AutoUpdater.Start("https://cdngamehook.merkelhaus.us/GameHookWpf_AutoUpdater.xml");
             }
 
             // Determine if WebView2 is installed.

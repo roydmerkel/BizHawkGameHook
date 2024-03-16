@@ -9,9 +9,9 @@ Live updates to this data are provided through websockets.
  \
  \
 Join our Discord Server \
-https://gamehook.io/discord
+https://gamehook.merkelhaus.us/discord
 
 ### Documentation
-https://gamehook.io/quickstart
+https://gamehook.merkelhaus.us/quickstart
 
-https://gamehook.io/scripting
+https://gamehook.merkelhaus.us/docs/scripting

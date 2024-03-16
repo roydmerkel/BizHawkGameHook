@@ -23,13 +23,13 @@ jobs:
     - name: Get current timestamp
       run: echo "CURRENT_TIMESTAMP=$(date +'%Y.%-m.%-d.%H%M')" >> $GITHUB_ENV
 
-    - name: Get latest commit hash from gamehook-io/mappers
+    - name: Get latest commit hash from roydmerkel/gamehook_mappers
       id: get_latest_commit
       uses: actions/github-script@v6
       with:
-        github-token: ${{secrets.GITHUB_TOKEN}}
+        github-token: ${{secrets.ACCESS_TOKEN}}
         script: |
-          const repo = { owner: 'gamehook-io', repo: 'mappers' };
+          const repo = { owner: 'roydmerkel', repo: 'gamehook_mappers' };
 
           const response = await github.rest.repos.getCommit({
             owner: repo.owner,
@@ -43,7 +43,7 @@ jobs:
       id: create_release
       uses: actions/create-release@v1
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
       with:
         tag_name: ${{ env.CURRENT_TIMESTAMP }}
         release_name: Release ${{ env.CURRENT_TIMESTAMP }}
@@ -54,6 +54,40 @@ jobs:
           - Misc bug fixes and enhancements.
 
           This version retrieves mappers from commit [${{ steps.get_latest_commit.outputs.mapper_commit_hash }}]
+
+  release-mappers:
+    name: Create New Mappers Release
+    runs-on: ubuntu-latest
+    needs:
+      - release
+    outputs:
+      mapper_commit_hash: ${{ needs.release.outputs.mapper_commit_hash }}
+      release_tag_name: ${{ needs.release.outputs.release_tag_name }}
+      release_id: ${{ needs.release.outputs.release_id }}
+    steps:
+    - name: Use Release Outputs
+      shell: bash
+      run: |
+        echo "Mapper Commit Hash: ${{ needs.release.outputs.mapper_commit_hash }}"
+        echo "Release Tag Name: ${{ needs.release.outputs.release_tag_name }}"
+        echo "Release ID: ${{ needs.release.outputs.release_id }}"
+
+    - name: Create Mappers Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+      with:
+        tag_name: ${{ needs.release.outputs.release_tag_name }}
+        release_name: Release ${{ needs.release.outputs.release_tag_name }}
+        draft: false
+        prerelease: ${{ github.event.inputs.prerelease }}
+        owner: roydmerkel
+        repo: gamehook_mappers
+        commitish: ${{ needs.release.outputs.mapper_commit_hash }}
+        body: |
+          Changes:
+          - Mappers from commit [${{ needs.release.outputs.mapper_commit_hash }}]
 
   build-and-upload:
     name: Build and Upload Assets
@@ -74,6 +108,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs:
       - release
+      - release-mappers
     steps:
       - name: Use Release Outputs
         shell: bash
@@ -96,6 +131,7 @@ jobs:
           fi
 
           # Update MAPPER_VERSION
+          echo "MAPPER_VERSION: \"$MAPPER_COMMIT\""
           jq --arg MAPPER_COMMIT "$MAPPER_COMMIT" '.MAPPER_VERSION = $MAPPER_COMMIT' ./src/GameHook.WebAPI/appsettings.json > ./src/GameHook.WebAPI/appsettings.json.tmp && mv ./src/GameHook.WebAPI/appsettings.json.tmp ./src/GameHook.WebAPI/appsettings.json
       
       - name: Setup .NET Core SDK
@@ -142,7 +178,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
         with:
           files: |
             ./GameHook-*.zip
@@ -156,6 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - release
+      - release-mappers
       - build-and-upload
     steps:
       - name: Discord Notification
@@ -163,4 +200,4 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_APP_UPDATES_WEBHOOK }}
         uses: Ilshidur/action-discord@master
         with:
-          args: 'A new version of GameHook has been released. Version ${{ needs.release.outputs.release_tag_name }} is now available. <https://github.com/gamehook-io/gamehook/releases/tag/${{ needs.release.outputs.release_tag_name }}>'
+          args: 'A new version of GameHook has been released. Version ${{ needs.release.outputs.release_tag_name }} is now available. <https://github.com/roydmerkel/BizHawkGameHook/releases/tag/${{ needs.release.outputs.release_tag_name }}>'

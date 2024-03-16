@@ -8,7 +8,7 @@
 
   "SHOW_READ_LOOP_STATISTICS": false,
 
-  "MAPPER_DIRECTORY": "C:\\Users\\Owner\\source\\repos\\gamehook-io\\mappers",
+  "MAPPER_DIRECTORY": "C:\\Users\\Owner\\source\\repos\\roydmerkel\\gamehook_mappers",
   "MAPPER_VERSION": null,
 
   "LOG_HTTP_TRAFFIC": false,

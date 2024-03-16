@@ -43,12 +43,12 @@ namespace GameHook.WebAPI
                     Contact = new OpenApiContact
                     {
                         Name = "GameHook",
-                        Url = new Uri("https://gamehook.io/")
+                        Url = new Uri("https://gamehook.merkelhaus.us/")
                     },
                     License = new OpenApiLicense
                     {
                         Name = "GNU Affero General Public License v3.0",
-                        Url = new Uri("https://github.com/gamehook-io/gamehook/blob/main/LICENSE.txt")
+                        Url = new Uri("https://github.com/roydmerkel/BizHawkGameHook/blob/main/LICENSE.txt")
                     }
                 });
             });
