@@ -169,7 +169,7 @@ namespace GameHook.WPF
                 {
                     MessageBox.Show(
                         @"There was a problem reaching our update server." +
-                        @"For additional assistance please visit our website at https://gamehook.io/",
+                        @"For additional assistance please visit our website at https://gamehook.merkelhaus.us/",
                         @"Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 else

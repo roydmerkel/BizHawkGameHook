@@ -43,7 +43,7 @@ namespace GameHook.WebAPI
                     Contact = new OpenApiContact
                     {
                         Name = "GameHook",
-                        Url = new Uri("https://gamehook.io/")
+                        Url = new Uri("https://gamehook.merkelhaus.us/")
                     },
                     License = new OpenApiLicense
                     {
