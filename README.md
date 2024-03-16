@@ -14,4 +14,4 @@ https://gamehook.merkelhaus.us/discord
 ### Documentation
 https://gamehook.merkelhaus.us/quickstart
 
-https://gamehook.merkelhaus.us/scripting
+https://gamehook.merkelhaus.us/docs/scripting
