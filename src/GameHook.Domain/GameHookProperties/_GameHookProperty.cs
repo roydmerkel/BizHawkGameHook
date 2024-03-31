@@ -1,4 +1,5 @@
-﻿using GameHook.Domain.Interfaces;
+﻿using GameHook.Domain.GameHookEvents;
+using GameHook.Domain.Interfaces;
 using System.Collections;
 
 namespace GameHook.Domain.GameHookProperties
@@ -22,6 +23,7 @@ namespace GameHook.Domain.GameHookProperties
             StaticValue = attributes.Value;
             Bytes = null;
             BytesFrozen = null;
+            Instantaneous = attributes.Instantaneous;
 
             ReadFunction = attributes.ReadFunction;
             WriteFunction = attributes.WriteFunction;
@@ -30,11 +32,27 @@ namespace GameHook.Domain.GameHookProperties
             AfterReadValueFunction = attributes.AfterReadValueFunction;
 
             BeforeWriteValueFunction = attributes.BeforeWriteValueFunction;
+
+            GameHookEvent = null;
+            if (Instantaneous != null && Instantaneous.Value)
+            {
+                var variables = new EventAttributes()
+                {
+                    Name = attributes.Path + "." + "variableEvent",
+                    EventType = EventType.EventType_ReadWrite,
+                    Address = attributes.Address,
+                    Property = this,
+                };
+
+                GameHookEvent = new VariableInstantaneousEvent(instance, variables);
+            }
         }
 
         protected IGameHookInstance Instance { get; }
         public string Path { get; }
         public string Type { get; }
+        public bool? Instantaneous { get; }
+        public IGameHookEvent? GameHookEvent { get; }
 
         public string? StaticValue { get; }
 

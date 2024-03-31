@@ -62,5 +62,35 @@ namespace GameHook.Infrastructure.Drivers
 
             return Task.CompletedTask;
         }
+
+        public Task ClearEvents()
+        {
+            if (BuildEnvironment.IsDebug == false)
+            {
+                throw new Exception("Static Memory Driver operations are not allowed if not in DEBUG mode.");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task AddEvent(long address, EventType eventType, EventRegisterOverride[] eventRegisterOverrides)
+        {
+            if (BuildEnvironment.IsDebug == false)
+            {
+                throw new Exception("Static Memory Driver operations are not allowed if not in DEBUG mode.");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveEvent(long address, EventType eventType)
+        {
+            if (BuildEnvironment.IsDebug == false)
+            {
+                throw new Exception("Static Memory Driver operations are not allowed if not in DEBUG mode.");
+            }
+
+            return Task.CompletedTask;
+        }
     }
 }

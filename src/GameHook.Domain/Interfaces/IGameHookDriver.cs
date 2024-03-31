@@ -17,6 +17,12 @@ namespace GameHook.Domain.Interfaces
         Task<Dictionary<uint, byte[]>> ReadBytes(IEnumerable<MemoryAddressBlock> blocks);
 
         Task WriteBytes(uint startingMemoryAddress, byte[] values);
+
+        Task ClearEvents();
+
+        Task AddEvent(long address, EventType eventType, EventRegisterOverride[] eventRegisterOverrides);
+
+        Task RemoveEvent(long address, EventType eventType);
     }
 
     public interface IBizhawkMemoryMapDriver : IGameHookDriver { }

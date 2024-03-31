@@ -196,5 +196,20 @@ namespace GameHook.Infrastructure.Drivers
         {
             return Task.CompletedTask;
         }
+
+        public Task ClearEvents()
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task AddEvent(long address, EventType eventType, EventRegisterOverride[] eventRegisterOverrides)
+        {
+            throw new Exception("Callback events are unsupported in RetroArch UDP api, at this time.");
+        }
+
+        public Task RemoveEvent(long address, EventType eventType)
+        {
+            throw new Exception("Callback events are unsupported in RetroArch UDP api, at this time.");
+        }
     }
 }

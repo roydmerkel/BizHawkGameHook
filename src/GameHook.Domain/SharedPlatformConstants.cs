@@ -25,6 +25,9 @@ public static class SharedPlatformConstants
     public const int BIZHAWK_METADATA_PACKET_SIZE = 32;
     public const int BIZHAWK_ROM_PACKET_SIZE = 0x200000 * 2;
     public const int BIZHAWK_DATA_PACKET_SIZE = 4 * 1024 * 1024;
+    public const int BIZHAWK_MAX_DATA_EVENTS = 256 * 2;
+    public const int BIZHAWK_MAX_EXECUTION_EVENTS_SIZE = 256;
+    public const int BIZHAWK_MAX_EVENTS_SIZE = BIZHAWK_MAX_DATA_EVENTS + BIZHAWK_MAX_EXECUTION_EVENTS_SIZE;
 
     public static readonly IEnumerable<PlatformEntry> Information = new List<PlatformEntry>()
     {
@@ -79,20 +82,58 @@ public static class SharedPlatformConstants
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
                 new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "CartRAM",
+                    CustomPacketTransmitPosition = 0x0,
+                    PhysicalStartingAddress = 0xA000,
+                    Length = 0x1FFF
+                },
+                new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "WRAM",
-                    CustomPacketTransmitPosition = 0,
+                    CustomPacketTransmitPosition = 0x1FFF + 1,
                     PhysicalStartingAddress = 0xC000,
-                    Length = 0x2000
+                    Length = 0x1FFF
                 },
                 new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "VRAM",
-                    CustomPacketTransmitPosition = 0x2000 + 1,
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
                 new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "HRAM",
-                    CustomPacketTransmitPosition = 0x1000 + 0x1FFF + 1,
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
+                    PhysicalStartingAddress = 0xFF80,
+                    Length = 0x7E
+                }
+            }
+        },
+        new PlatformEntry()
+        {
+            IsBigEndian = false,
+            BizhawkIdentifier = "SGB",
+            MemoryLayout = new PlatformMemoryLayoutEntry[]
+            {
+                new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "CartRAM",
+                    CustomPacketTransmitPosition = 0x0,
+                    PhysicalStartingAddress = 0xA000,
+                    Length = 0x1FFF
+                },
+                new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "WRAM",
+                    CustomPacketTransmitPosition = 0x1FFF + 1,
+                    PhysicalStartingAddress = 0xC000,
+                    Length = 0x1FFF
+                },
+                new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "VRAM",
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
+                    PhysicalStartingAddress = 0x8000,
+                    Length = 0x1FFF
+                },
+                new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "HRAM",
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 }
@@ -105,20 +146,26 @@ public static class SharedPlatformConstants
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
                 new PlatformMemoryLayoutEntry {
+                    BizhawkIdentifier = "CartRAM",
+                    CustomPacketTransmitPosition = 0x0,
+                    PhysicalStartingAddress = 0xA000,
+                    Length = 0x1FFF
+                },
+                new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "WRAM",
-                    CustomPacketTransmitPosition = 0,
+                    CustomPacketTransmitPosition = 0x1FFF + 1,
                     PhysicalStartingAddress = 0xC000,
-                    Length = 0x2000
+                    Length = 0x1FFF
                 },
                 new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "VRAM",
-                    CustomPacketTransmitPosition = 0x2000 + 1,
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
                 new PlatformMemoryLayoutEntry {
                     BizhawkIdentifier = "HRAM",
-                    CustomPacketTransmitPosition = 0x2000 + 0x1FFF + 1,
+                    CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 }

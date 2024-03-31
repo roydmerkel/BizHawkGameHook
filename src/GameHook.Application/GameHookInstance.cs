@@ -91,6 +91,7 @@ namespace GameHook.Application
                 Driver = driver;
 
                 await Driver.EstablishConnection();
+                await Driver.ClearEvents();
 
                 // Load the mapper file.
                 if (string.IsNullOrEmpty(mapperId))
@@ -130,6 +131,7 @@ namespace GameHook.Application
                     "NES" => new NES_PlatformOptions(),
                     "SNES" => new SNES_PlatformOptions(),
                     "GB" => new GB_PlatformOptions(),
+                    "SGB" => new SGB_PlatformOptions(),
                     "GBC" => new GBC_PlatformOptions(),
                     "GBA" => new GBA_PlatformOptions(),
                     "PSX" => new PSX_PlatformOptions(),

@@ -1,4 +1,5 @@
 ﻿using NCalc;
+using System.Text.RegularExpressions;
 
 namespace GameHook.Domain
 {
@@ -13,6 +14,28 @@ namespace GameHook.Domain
                     address = 0x00;
                     return false;
                 }
+                Regex hexMatch = new Regex("^.*(0[xX][0-9A-Fa-f]+).*$", RegexOptions.IgnoreCase);
+                bool hasMatch;
+                do
+                {
+                    hasMatch = false;
+                    Match match = hexMatch.Match(addressExpression);
+                    if(match.Success)
+                    {
+                        string curAddressExpression = addressExpression;
+
+                        hasMatch = true;
+                        for (int i = match.Groups.Count - 1; i >= 1; i--)
+                        {
+                            string search = match.Groups[i].Value;
+                            string replace = search.ParseIntOrHex(search).ToString();
+
+                            curAddressExpression = curAddressExpression.Replace(search, replace);
+                        }
+
+                        addressExpression = curAddressExpression;
+                    }
+                } while (hasMatch);
 
                 var expression = new Expression(addressExpression);
 

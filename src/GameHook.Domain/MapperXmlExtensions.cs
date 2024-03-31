@@ -1,3 +1,4 @@
+using GameHook.Domain.Interfaces;
 using System.Xml.Linq;
 
 namespace GameHook.Domain;
@@ -87,6 +88,51 @@ public static class MapperXmlExtensions
             return null;
         }
     }
+
+    public static EventType? GetOptionalAttributeValueAsEventType(this XElement el, string name)
+    {
+        XAttribute? xAttribute = el.Attribute(name);
+
+        if (xAttribute != null)
+        {
+            string value = el.GetAttributeValue(name);
+
+            if (value != null)
+            {
+                switch (value.ToLower())
+                {
+                    case "read":
+                        return EventType.EventType_Read;
+                    case "write":
+                        return EventType.EventType_Write;
+                    case "execute":
+                        return EventType.EventType_Execute;
+                    case "read_execute":
+                        return EventType.EventType_ReadExecute;
+                    case "read_write":
+                        return EventType.EventType_ReadWrite;
+                    case "write_execute":
+                        return EventType.EventType_WriteExecute;
+                    case "read_write_execute":
+                    case "access":
+                        return EventType.EventType_ReadWriteExecute;
+                    default:
+                        throw new FormatException();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
+        }
+    }
+
+    public static EventType GetAttributeValueAsEventType(this XElement el, string name) =>
+        el.GetOptionalAttributeValueAsEventType(name) ?? throw new Exception($"Node does not have required '{name}' attribute. {el}");
 
     public static bool IsArray(this XElement el)
     {

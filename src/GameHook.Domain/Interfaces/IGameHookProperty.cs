@@ -38,6 +38,8 @@
         string? Reference { get; }
         string? Bits { get; }
         string? Description { get; }
+        bool? Instantaneous { get;  }
+        IGameHookEvent? GameHookEvent { get; }
 
         object? Value { get; set; }
         byte[]? Bytes { get; }

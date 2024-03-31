@@ -24,5 +24,6 @@
         MemorySection Memory { get; }
         Dictionary<string, IGameHookProperty> Properties { get; }
         Dictionary<string, ReferenceItems> References { get; }
+        Dictionary<string, IGameHookEvent> Events { get; }
     }
 }

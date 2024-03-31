@@ -4,6 +4,9 @@ using GameHook.Domain.Interfaces;
 using System.Data;
 using System.Xml;
 using System.Xml.Linq;
+using GameHook.Domain.GameHookEvents;
+using System.Diagnostics.Contracts;
+using Esprima.Ast;
 
 namespace GameHook.Application
 {
@@ -128,6 +131,79 @@ namespace GameHook.Application
                 .ToArray();
         }
 
+        static IEnumerable<IGameHookEvent> GetEvents(XDocument doc, IGameHookInstance? instance)
+        {
+            return doc.Descendants("events").Descendants("event")
+                .Select<XElement, IGameHookEvent>(x =>
+                {
+                    try
+                    {
+                        if (instance == null) { throw new Exception("Instance is null."); }
+
+                        EventType eventType;
+                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        {
+                            eventType = EventType.EventType_HardReset;
+                        }
+                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_softreset")
+                        {
+                            eventType = EventType.EventType_SoftReset;
+                        }
+                        else
+                        {
+                            eventType = x.GetAttributeValueAsEventType("event-type");
+                        }
+
+                        var variables = new EventAttributes()
+                        {
+                            Name = x.Attribute("name")!.Value,
+                            EventType = eventType,
+                            Address = (x == null || x.Attribute("name") == null || x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset" || x.Attribute("name")!.Value.ToLowerInvariant() == "_softreset") ? null : x.GetOptionalAttributeValue("address"),
+                            EventRegisterOverrides = x.Descendants("override").Select(x =>
+                            {
+                                return new EventRegisterOverride(x.Attribute("register")?.Value, x.Attribute("value")?.Value);
+                            }),
+                        };
+
+                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        {
+                            return new HardResetEvent(instance, variables);
+                        }
+                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        {
+                            return new SoftResetEvent(instance, variables);
+                        }
+                        else
+                        {
+                            switch (eventType)
+                            {
+                                case EventType.EventType_Read:
+                                    return new ReadEvent(instance, variables);
+                                case EventType.EventType_ReadWrite:
+                                    return new ReadWriteEvent(instance, variables);
+                                case EventType.EventType_ReadExecute:
+                                    return new ReadExecuteEvent(instance, variables);
+                                case EventType.EventType_Write:
+                                    return new WriteEvent(instance, variables);
+                                case EventType.EventType_WriteExecute:
+                                    return new WriteExecuteEvent(instance, variables);
+                                case EventType.EventType_ReadWriteExecute:
+                                    return new ReadWriteExecuteEvent(instance, variables);
+                                case EventType.EventType_Execute:
+                                    return new ExecuteEvent(instance, variables);
+                                default:
+                                    throw new Exception($"Unknown event type {eventType}.");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new Exception($"Unable to parse {x.GetElementPath()}. {x}", innerException: ex);
+                    }
+                })
+                .ToArray();
+        }
+
         public static IEnumerable<ReferenceItems> GetGlossary(XDocument doc)
         {
             return doc.Descendants("references")
@@ -208,7 +284,7 @@ namespace GameHook.Application
                 attr.Value = attr.Value.NormalizeMemoryAddresses();
             }
 
-            return new GameHookMapper(GetMetadata(doc), GetMemory(doc), GetProperties(doc, instance), GetGlossary(doc));
+            return new GameHookMapper(GetMetadata(doc), GetMemory(doc), GetProperties(doc, instance), GetGlossary(doc), GetEvents(doc, instance));
         }
     }
 }
