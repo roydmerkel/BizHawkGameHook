@@ -26,6 +26,9 @@
 		<Reference Include="BizHawk.Emulation.Common">
 		  <HintPath>..\..\BizHawk\dll\BizHawk.Emulation.Common.dll</HintPath>
 		</Reference>
+		<Reference Include="BizHawk.Emulation.Cores">
+		  <HintPath>..\..\BizHawk\dll\BizHawk.Emulation.Cores.dll</HintPath>
+		</Reference>
 		<Reference Include="BizHawk.WinForms.Controls">
 		  <HintPath>..\..\BizHawk\dll\BizHawk.WinForms.Controls.dll</HintPath>
 		</Reference>

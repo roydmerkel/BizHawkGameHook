@@ -54,6 +54,15 @@ namespace GameHook.Infrastructure.Drivers
                 }
                 Value = value;
             }
+
+            public string getRegisterString()
+            {
+                byte[] bytes = BitConverter.GetBytes(Register);
+                string register = Encoding.ASCII.GetString(bytes);
+                register = register.TrimEnd('\0');
+
+                return register;
+            }
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -63,6 +72,9 @@ namespace GameHook.Infrastructure.Drivers
 
             public bool Active;
             public long Address;
+            public ushort Bank;
+            public bool ValueSet;
+            public byte Value;
             public EventType EventType;
             public EventAddressRegisterOverride EventAddressRegisterOverride0;
             public EventAddressRegisterOverride EventAddressRegisterOverride1;
@@ -71,10 +83,10 @@ namespace GameHook.Infrastructure.Drivers
             public EventAddressRegisterOverride EventAddressRegisterOverride4;
             public EventAddressRegisterOverride EventAddressRegisterOverride5;
 
-            public EventAddress() : this(false, 0x00, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { })
+            public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { })
             {
             }
-            public EventAddress(bool active, long address, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides)
+            public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides)
             {
                 EventAddressRegisterOverride0 = new EventAddressRegisterOverride();
                 EventAddressRegisterOverride1 = new EventAddressRegisterOverride();
@@ -85,7 +97,10 @@ namespace GameHook.Infrastructure.Drivers
 
                 Active = active;
                 Address = address;
+                Bank = bank;
                 EventType = eventType;
+                ValueSet = false;
+                Value = 0x00;
                 if (eventAddressRegisterOverrides == null)
                 {
                     throw new ArgumentNullException(nameof(eventAddressRegisterOverrides));
@@ -129,6 +144,25 @@ namespace GameHook.Infrastructure.Drivers
                         idx++;
                     }
                 }
+            }
+
+            public EventAddressRegisterOverride[] getOverrides()
+            {
+                List<EventAddressRegisterOverride> overrides = [];
+                foreach(var i in new List<EventAddressRegisterOverride> {EventAddressRegisterOverride0,
+                        EventAddressRegisterOverride1,
+                        EventAddressRegisterOverride2,
+                        EventAddressRegisterOverride3,
+                        EventAddressRegisterOverride4,
+                        EventAddressRegisterOverride5})
+                {
+                    if ((i.Register & 0xFFUL) != 0)
+                    {
+                        overrides.Add(i);
+                    }
+                }
+
+                return overrides.ToArray();
             }
         }
 
@@ -258,7 +292,7 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task AddEvent(long address, EventType eventType, EventRegisterOverride[] eventRegisterOverrides)
+        public Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides)
         {
             try
             {
@@ -317,7 +351,7 @@ namespace GameHook.Infrastructure.Drivers
                                 eventAddressRegisterOverrides = new List<EventAddressRegisterOverride>();
                             }
 
-                            EventAddress newAddress = new EventAddress(true, address, eventType, eventAddressRegisterOverrides.ToArray());
+                            EventAddress newAddress = new EventAddress(true, address, bank, eventType, eventAddressRegisterOverrides.ToArray());
                             currentEvents.Add(newAddress);
 
                             if(currentEvents.Count() < eventsLookupSize)
@@ -359,7 +393,7 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task RemoveEvent(long address, EventType eventType)
+        public Task RemoveEvent(long address, ushort bank, EventType eventType)
         {
             try
             {
@@ -376,7 +410,7 @@ namespace GameHook.Infrastructure.Drivers
                         using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
                         EventAddress[] currentEventsLookup = new EventAddress[eventsLookupSize];
                         mmfAccessor.ReadArray(1, currentEventsLookup, 0, currentEventsLookup.Length);
-                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType)).ToList();
+                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.Bank != bank || x.EventType != eventType)).ToList();
 
                         if (currentEvents.Count() < eventsLookupSize)
                         {

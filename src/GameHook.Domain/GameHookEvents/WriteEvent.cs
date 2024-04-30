@@ -7,18 +7,18 @@ namespace GameHook.Domain.GameHookEvents
         public WriteEvent(IGameHookInstance instance, EventAttributes variables) : base(instance, variables)
         {
         }
-        public override void ClearEvent(MemoryAddress address)
+        public override void ClearEvent(MemoryAddress address, ushort bank)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.RemoveEvent(address, EventType.EventType_Write);
+                Instance.Driver.RemoveEvent(address, bank, EventType.EventType_Write);
             }
         }
-        public override void SetEvent(MemoryAddress address)
+        public override void SetEvent(MemoryAddress address, ushort bank)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.AddEvent(address, EventType.EventType_Write, EventRegisterOverrides);
+                Instance.Driver.AddEvent(address, bank, EventType.EventType_Write, EventRegisterOverrides);
             }
         }
     }

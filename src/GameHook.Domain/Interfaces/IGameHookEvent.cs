@@ -21,6 +21,7 @@
     {
         public required string Name { get; init; }
         public string? MemoryContainer { get; init; }
+        public ushort? Bank { get; init; }
         public string? Address { get; init; }
         public required EventType EventType { get; init; }
         public string? Description { get; set; }
@@ -41,8 +42,8 @@
         EventRegisterOverride[] EventRegisterOverrides { get; }
 
         void ProcessLoop(IMemoryManager container);
-        void ClearEvent(MemoryAddress address);
-        void SetEvent(MemoryAddress address);
+        void ClearEvent(MemoryAddress address, ushort bank);
+        void SetEvent(MemoryAddress address, ushort bank);
         void UpdateAddressFromProperty();
     }
 }

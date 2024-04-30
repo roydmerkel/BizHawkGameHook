@@ -159,6 +159,7 @@ namespace GameHook.Application
                             Name = x.Attribute("name")!.Value,
                             EventType = eventType,
                             Address = (x == null || x.Attribute("name") == null || x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset" || x.Attribute("name")!.Value.ToLowerInvariant() == "_softreset") ? null : x.GetOptionalAttributeValue("address"),
+                            Bank = (x == null || x.Attribute("bank") == null) ? ushort.MaxValue : ushort.Parse(x.GetOptionalAttributeValue("bank")),
                             EventRegisterOverrides = x.Descendants("override").Select(x =>
                             {
                                 return new EventRegisterOverride(x.Attribute("register")?.Value, x.Attribute("value")?.Value);

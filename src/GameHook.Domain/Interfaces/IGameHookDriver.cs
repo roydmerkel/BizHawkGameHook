@@ -20,9 +20,9 @@ namespace GameHook.Domain.Interfaces
 
         Task ClearEvents();
 
-        Task AddEvent(long address, EventType eventType, EventRegisterOverride[] eventRegisterOverrides);
+        Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides);
 
-        Task RemoveEvent(long address, EventType eventType);
+        Task RemoveEvent(long address, ushort bank, EventType eventType);
     }
 
     public interface IBizhawkMemoryMapDriver : IGameHookDriver { }
