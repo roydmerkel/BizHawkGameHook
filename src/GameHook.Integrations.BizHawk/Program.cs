@@ -106,8 +106,6 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         public bool Active;
         public long Address;
         public ushort Bank;
-        public bool ValueSet;
-        public byte Value;
         public EventType EventType;
         public EventAddressRegisterOverride EventAddressRegisterOverride0;
         public EventAddressRegisterOverride EventAddressRegisterOverride1;
@@ -132,8 +130,6 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             Address = address;
             Bank = bank;
             EventType = eventType;
-            ValueSet = false;
-            Value = 0x00;
             if (eventAddressRegisterOverrides == null)
             {
                 throw new ArgumentNullException(nameof(eventAddressRegisterOverrides));
@@ -1886,7 +1882,17 @@ public static class SharedPlatformConstants
             },
             GetMapper = (platform, emulator, memoryDomains, debuggable, boardName) =>
             {
-                throw new Exception("NYI");
+                return new PlatformMapper
+                {
+                    GetMapperName = () => { return "N/A"; },
+                    InitMapperDetection = () =>
+                    {
+                    },
+                    GetBankFunctionAndCallbackDomain = (address) =>
+                    {
+                        return new Tuple<GetMapperBankDelegate?, string>(() => { return 0; }, "System Bus");
+                    }
+                };
             }
         },
         new PlatformEntry()
@@ -2079,7 +2085,17 @@ public static class SharedPlatformConstants
             },
             GetMapper = (platform, emulator, memoryDomains, debuggable, boardName) =>
             {
-                throw new Exception("NYI");
+                return new PlatformMapper
+                {
+                    GetMapperName = () => { return "N/A"; },
+                    InitMapperDetection = () =>
+                    {
+                    },
+                    GetBankFunctionAndCallbackDomain = (address) =>
+                    {
+                        return new Tuple<GetMapperBankDelegate?, string>(() => { return 0; }, "System Bus");
+                    }
+                };
             }
         },
         new PlatformEntry()
@@ -2098,7 +2114,17 @@ public static class SharedPlatformConstants
             },
             GetMapper = (platform, emulator, memoryDomains, debuggable, boardName) =>
             {
-                throw new Exception("NYI");
+                return new PlatformMapper
+                {
+                    GetMapperName = () => { return "N/A"; },
+                    InitMapperDetection = () =>
+                    {
+                    },
+                    GetBankFunctionAndCallbackDomain = (address) =>
+                    {
+                        return new Tuple<GetMapperBankDelegate?, string>(() => { return 0; }, "System Bus");
+                    }
+                };
             }
         }
     };

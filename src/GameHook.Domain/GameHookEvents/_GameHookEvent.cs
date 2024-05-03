@@ -11,6 +11,10 @@ namespace GameHook.Domain.GameHookEvents
             Name = attributes.Name;
             EventType = attributes.EventType;
 
+            Length = attributes.Length;
+            Size = attributes.Size;
+            Bits = attributes.Bits;
+
             MemoryContainer = attributes.MemoryContainer;
             Description = attributes.Description;
             EventRegisterOverrides = attributes?.EventRegisterOverrides.ToArray() ?? [];

@@ -23,6 +23,9 @@
         public string? MemoryContainer { get; init; }
         public ushort? Bank { get; init; }
         public string? Address { get; init; }
+        public int? Length { get; init; } = 1;
+        public int? Size { get; init; }
+        public string? Bits { get; set; }
         public required EventType EventType { get; init; }
         public string? Description { get; set; }
         public IGameHookProperty? Property { get; init; }
@@ -38,6 +41,9 @@
         EventType EventType { get; }
         string? Description { get; set; }
         IGameHookProperty? Property { get; }
+        int? Length { get; }
+        int? Size { get; }
+        string? Bits { get; }
 
         EventRegisterOverride[] EventRegisterOverrides { get; }
 

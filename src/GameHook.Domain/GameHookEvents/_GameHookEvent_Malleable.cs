@@ -11,6 +11,9 @@ namespace GameHook.Domain.GameHookEvents
         private ushort? _oldBank { get; set; }
         private string? _addressString { get; set; }
         private string? _description { get; set; }
+        private int? _length { get; set; }
+        private int? _size { get; set; }
+        private string? _bits { get; set; }
 
         public string? MemoryContainer
         {
@@ -148,6 +151,42 @@ namespace GameHook.Domain.GameHookEvents
                 }
 
                 FieldsChanged.Add("bank");
+            }
+        }
+
+        public int? Length
+        {
+            get => _length;
+            set
+            {
+                if (_length == value) return;
+
+                FieldsChanged.Add("length");
+                _length = value;
+            }
+        }
+
+        public int? Size
+        {
+            get => _size;
+            set
+            {
+                if (_size == value) return;
+
+                FieldsChanged.Add("size");
+                _size = value;
+            }
+        }
+
+        public string? Bits
+        {
+            get => _bits;
+            set
+            {
+                if (_bits == value) return;
+
+                FieldsChanged.Add("bits");
+                _bits = value;
             }
         }
     }

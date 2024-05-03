@@ -6,6 +6,9 @@ namespace GameHook.Domain.GameHookEvents
     {
         public VariableInstantaneousEvent(IGameHookInstance instance, EventAttributes variables) : base(instance, variables)
         {
+            Size = Property?.Size ?? 0;
+            Length = Property?.Length ?? 1;
+            Bits = Property?.Bits;
         }
 
         public override void ClearEvent(MemoryAddress address, ushort bank)

@@ -73,8 +73,6 @@ namespace GameHook.Infrastructure.Drivers
             public bool Active;
             public long Address;
             public ushort Bank;
-            public bool ValueSet;
-            public byte Value;
             public EventType EventType;
             public EventAddressRegisterOverride EventAddressRegisterOverride0;
             public EventAddressRegisterOverride EventAddressRegisterOverride1;
@@ -99,8 +97,6 @@ namespace GameHook.Infrastructure.Drivers
                 Address = address;
                 Bank = bank;
                 EventType = eventType;
-                ValueSet = false;
-                Value = 0x00;
                 if (eventAddressRegisterOverrides == null)
                 {
                     throw new ArgumentNullException(nameof(eventAddressRegisterOverrides));
@@ -314,6 +310,10 @@ namespace GameHook.Infrastructure.Drivers
                         {
                             throw new Exception("Too many events, please contact devs to get more added, or remove some events or instant properties.");
                         }
+                        else if(currentEvents.Exists((x) => { return x.Address == address && x.EventType == eventType && x.Active; }))
+                        {
+                            throw new Exception("Event with event type and address already exists.");
+                        }
                         else
                         {
                             IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides;
@@ -410,7 +410,7 @@ namespace GameHook.Infrastructure.Drivers
                         using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
                         EventAddress[] currentEventsLookup = new EventAddress[eventsLookupSize];
                         mmfAccessor.ReadArray(1, currentEventsLookup, 0, currentEventsLookup.Length);
-                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.Bank != bank || x.EventType != eventType)).ToList();
+                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType)).ToList();
 
                         if (currentEvents.Count() < eventsLookupSize)
                         {
