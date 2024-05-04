@@ -20,7 +20,7 @@ namespace GameHook.Domain.Interfaces
 
         Task ClearEvents();
 
-        Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides);
+        Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size);
 
         Task RemoveEvent(long address, ushort bank, EventType eventType);
     }

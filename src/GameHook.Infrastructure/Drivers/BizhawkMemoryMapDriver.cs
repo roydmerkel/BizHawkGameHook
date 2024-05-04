@@ -46,7 +46,7 @@ namespace GameHook.Infrastructure.Drivers
                     {
                         bytes = new List<byte> { };
                     }
-                    while(bytes.Count < sizeof(ulong))
+                    while (bytes.Count < sizeof(ulong))
                     {
                         bytes.Add(0);
                     }
@@ -69,6 +69,7 @@ namespace GameHook.Infrastructure.Drivers
         public struct EventAddress
         {
             const int MaxRegisterOverride = 6;
+            const int MaxBitsLength = 64 * 8 / 8;
 
             public bool Active;
             public long Address;
@@ -80,11 +81,21 @@ namespace GameHook.Infrastructure.Drivers
             public EventAddressRegisterOverride EventAddressRegisterOverride3;
             public EventAddressRegisterOverride EventAddressRegisterOverride4;
             public EventAddressRegisterOverride EventAddressRegisterOverride5;
+            public UInt64 Bits0;
+            public UInt64 Bits1;
+            public UInt64 Bits2;
+            public UInt64 Bits3;
+            public UInt64 Bits4;
+            public UInt64 Bits5;
+            public UInt64 Bits6;
+            public UInt64 Bits7;
+            public int Length;
+            public int Size;
 
-            public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { })
+            public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0)
             {
             }
-            public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides)
+            public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size)
             {
                 EventAddressRegisterOverride0 = new EventAddressRegisterOverride();
                 EventAddressRegisterOverride1 = new EventAddressRegisterOverride();
@@ -92,6 +103,16 @@ namespace GameHook.Infrastructure.Drivers
                 EventAddressRegisterOverride3 = new EventAddressRegisterOverride();
                 EventAddressRegisterOverride4 = new EventAddressRegisterOverride();
                 EventAddressRegisterOverride5 = new EventAddressRegisterOverride();
+                Bits0 = 0;
+                Bits1 = 0;
+                Bits2 = 0;
+                Bits3 = 0;
+                Bits4 = 0;
+                Bits5 = 0;
+                Bits6 = 0;
+                Bits7 = 0;
+                Length = length;
+                Size = (size > 0) ? size : 1;
 
                 Active = active;
                 Address = address;
@@ -140,12 +161,45 @@ namespace GameHook.Infrastructure.Drivers
                         idx++;
                     }
                 }
+                if (bits == null)
+                {
+                    // noop, bits is already initialized to 0
+                }
+                else if (bits.Count() < 0 || bits.Count() > MaxBitsLength)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(bits));
+                }
+                else
+                {
+                    // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
+                    // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
+                    // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
+                    // attribute can be used to bypass.
+                    List<byte> bitsBytes = new List<byte>(Encoding.ASCII.GetBytes(bits));
+                    if (bitsBytes == null)
+                    {
+                        bitsBytes = new List<byte> { };
+                    }
+                    while (bitsBytes.Count < MaxBitsLength)
+                    {
+                        bitsBytes.Add(0);
+                    }
+                    byte[] bitsBytsArray = bitsBytes.ToArray();
+                    Bits0 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 0).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits1 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 1).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits2 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 2).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits3 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 3).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits4 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 4).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits5 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 5).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits6 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 6).Take(sizeof(UInt64)).ToArray(), 0);
+                    Bits7 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 7).Take(sizeof(UInt64)).ToArray(), 0);
+                }
             }
 
             public EventAddressRegisterOverride[] getOverrides()
             {
-                List<EventAddressRegisterOverride> overrides = [];
-                foreach(var i in new List<EventAddressRegisterOverride> {EventAddressRegisterOverride0,
+                List<EventAddressRegisterOverride> overrides = new List<EventAddressRegisterOverride>();
+                foreach (var i in new List<EventAddressRegisterOverride> {EventAddressRegisterOverride0,
                         EventAddressRegisterOverride1,
                         EventAddressRegisterOverride2,
                         EventAddressRegisterOverride3,
@@ -159,6 +213,23 @@ namespace GameHook.Infrastructure.Drivers
                 }
 
                 return overrides.ToArray();
+            }
+
+            public string getBitsString()
+            {
+                IEnumerable<byte> bytes = BitConverter.GetBytes(Bits0).ToList();
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits1).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits2).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits3).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits4).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits5).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits6).ToList());
+                bytes = bytes.Concat(BitConverter.GetBytes(Bits7).ToList());
+
+                string bits = Encoding.ASCII.GetString(bytes.ToArray());
+                bits = bits.TrimEnd('\0');
+
+                return bits;
             }
         }
 
@@ -288,7 +359,7 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides)
+        public Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
         {
             try
             {
@@ -309,10 +380,6 @@ namespace GameHook.Infrastructure.Drivers
                         if(currentEvents.Count() >= eventsLookupSize)
                         {
                             throw new Exception("Too many events, please contact devs to get more added, or remove some events or instant properties.");
-                        }
-                        else if(currentEvents.Exists((x) => { return x.Address == address && x.EventType == eventType && x.Active; }))
-                        {
-                            throw new Exception("Event with event type and address already exists.");
                         }
                         else
                         {
@@ -351,7 +418,7 @@ namespace GameHook.Infrastructure.Drivers
                                 eventAddressRegisterOverrides = new List<EventAddressRegisterOverride>();
                             }
 
-                            EventAddress newAddress = new EventAddress(true, address, bank, eventType, eventAddressRegisterOverrides.ToArray());
+                            EventAddress newAddress = new EventAddress(true, address, bank, eventType, eventAddressRegisterOverrides.ToArray(), bits, length, size);
                             currentEvents.Add(newAddress);
 
                             if(currentEvents.Count() < eventsLookupSize)
@@ -410,7 +477,7 @@ namespace GameHook.Infrastructure.Drivers
                         using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
                         EventAddress[] currentEventsLookup = new EventAddress[eventsLookupSize];
                         mmfAccessor.ReadArray(1, currentEventsLookup, 0, currentEventsLookup.Length);
-                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType)).ToList();
+                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType || x.Bank != bank)).ToList();
 
                         if (currentEvents.Count() < eventsLookupSize)
                         {

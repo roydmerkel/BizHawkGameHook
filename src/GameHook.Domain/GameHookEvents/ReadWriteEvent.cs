@@ -16,12 +16,12 @@ namespace GameHook.Domain.GameHookEvents
                 Instance.Driver.RemoveEvent(address, bank, EventType.EventType_Write);
             }
         }
-        public override void SetEvent(MemoryAddress address, ushort bank)
+        public override void SetEvent(MemoryAddress address, ushort bank, string? bits, int length, int size)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.AddEvent(address, bank, EventType.EventType_Write, EventRegisterOverrides);
-                Instance.Driver.AddEvent(address, bank, EventType.EventType_Read, EventRegisterOverrides);
+                Instance.Driver.AddEvent(address, bank, EventType.EventType_Write, EventRegisterOverrides, bits, length, size);
+                Instance.Driver.AddEvent(address, bank, EventType.EventType_Read, EventRegisterOverrides, bits, length, size);
             }
         }
     }

@@ -3,6 +3,7 @@ using BizHawk.Client.EmuHawk;
 using BizHawk.Common;
 using BizHawk.Common.StringExtensions;
 using BizHawk.Emulation.Common;
+using BizHawk.Emulation.Cores.Components.M68000;
 using BizHawk.Emulation.Cores.Nintendo.BSNES;
 using BizHawk.Emulation.Cores.Nintendo.Gameboy;
 using BizHawk.Emulation.Cores.Nintendo.GBHawk;
@@ -102,6 +103,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     public struct EventAddress
     {
         const int MaxRegisterOverride = 6;
+        const int MaxBitsLength = 64 * 8 / 8;
 
         public bool Active;
         public long Address;
@@ -113,11 +115,21 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         public EventAddressRegisterOverride EventAddressRegisterOverride3;
         public EventAddressRegisterOverride EventAddressRegisterOverride4;
         public EventAddressRegisterOverride EventAddressRegisterOverride5;
+        public UInt64 Bits0;
+        public UInt64 Bits1;
+        public UInt64 Bits2;
+        public UInt64 Bits3;
+        public UInt64 Bits4;
+        public UInt64 Bits5;
+        public UInt64 Bits6;
+        public UInt64 Bits7;
+        public int Length;
+        public int Size;
 
-        public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { })
+        public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0)
         {
         }
-        public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides)
+        public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size)
         {
             EventAddressRegisterOverride0 = new EventAddressRegisterOverride();
             EventAddressRegisterOverride1 = new EventAddressRegisterOverride();
@@ -125,6 +137,16 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             EventAddressRegisterOverride3 = new EventAddressRegisterOverride();
             EventAddressRegisterOverride4 = new EventAddressRegisterOverride();
             EventAddressRegisterOverride5 = new EventAddressRegisterOverride();
+            Bits0 = 0;
+            Bits1 = 0;
+            Bits2 = 0;
+            Bits3 = 0;
+            Bits4 = 0;
+            Bits5 = 0;
+            Bits6 = 0;
+            Bits7 = 0;
+            Length = length;
+            Size = (size > 0) ? size : 1;
 
             Active = active;
             Address = address;
@@ -173,6 +195,39 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     idx++;
                 }
             }
+            if (bits == null)
+            {
+                // noop, bits is already initialized to 0
+            }
+            else if (bits.Count() < 0 || bits.Count() > MaxBitsLength)
+            {
+                throw new ArgumentOutOfRangeException(nameof(bits));
+            }
+            else
+            {
+                // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
+                // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
+                // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
+                // attribute can be used to bypass.
+                List<byte> bitsBytes = new List<byte>(Encoding.ASCII.GetBytes(bits));
+                if (bitsBytes == null)
+                {
+                    bitsBytes = new List<byte> { };
+                }
+                while (bitsBytes.Count < MaxBitsLength)
+                {
+                    bitsBytes.Add(0);
+                }
+                byte[] bitsBytsArray = bitsBytes.ToArray();
+                Bits0 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 0).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits1 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 1).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits2 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 2).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits3 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 3).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits4 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 4).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits5 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 5).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits6 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 6).Take(sizeof(UInt64)).ToArray(), 0);
+                Bits7 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 7).Take(sizeof(UInt64)).ToArray(), 0);
+            }
         }
 
         public EventAddressRegisterOverride[] getOverrides()
@@ -192,6 +247,23 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             }
 
             return overrides.ToArray();
+        }
+
+        public string getBitsString()
+        {
+            IEnumerable<byte> bytes = BitConverter.GetBytes(Bits0).ToList();
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits1).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits2).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits3).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits4).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits5).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits6).ToList());
+            bytes = bytes.Concat(BitConverter.GetBytes(Bits7).ToList());
+
+            string bits = Encoding.ASCII.GetString(bytes.ToArray());
+            bits = bits.TrimEnd('\0');
+
+            return bits;
         }
     }
 
@@ -286,179 +358,222 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             EventAddress[] eventAddressLookups = new EventAddress[SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE];
             GameHookEventsLookup_Accessor?.ReadArray(1, eventAddressLookups, 0, SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE);
 
-            IEnumerable<Tuple<uint, EventType>> existingMemoryBreakpoints = 
-                (Debuggable == null) ? new Tuple<uint, EventType>[0] : 
-                    (Debuggable.MemoryCallbacks == null) ? new Tuple<uint, EventType>[0] : 
-                        Debuggable.MemoryCallbacks.Where(x => x.Address != null)
-                            .Select(x => new Tuple<uint, EventType>(x.Address!.Value + Convert.ToUInt32(scopeToEntry[x.Scope].PhysicalStartingAddress), MemoryCallbackTypeToEventType(x.Type)));
-
-            // check for missing elements from existingMemoryBreakpoints in eventAddressLookups and remove them
-            if (existingMemoryBreakpoints != null)
+            if (Platform == null)
             {
-                foreach (var missingAddress in existingMemoryBreakpoints.Where(x => !eventAddressLookups.Any(y => y.Active && x.Item1 == y.Address && x.Item2 == y.EventType)).Select(x => x))
+                throw new Exception("Callbacks aren't supported yet on this platform.");
+            }
+            if (Platform.GetMapper == null)
+            {
+                throw new Exception("Callbacks aren't supported yet on this platform.");
+            }
+            SharedPlatformConstants.PlatformMapper Mapper = Platform.GetMapper(Platform, Emulator, MemoryDomains, Debuggable, BoardInfo?.BoardName);
+            if (Mapper.GetBankFunctionAndCallbackDomain == null)
+            {
+                throw new Exception("Callbacks aren't supported yet on this platform.");
+            }
+            if(Debuggable == null)
+            {
+                throw new Exception("Callbacks aren't supported yet on this platform.");
+            }
+
+            // clear all current breakpoints.
+            Console.WriteLine($"Clearing events.");
+            Debuggable?.MemoryCallbacks?.Clear();
+            HardReset = null;
+            SoftReset = null;
+
+            // get list of unique addressess to break on.
+            List<long> breakAddresses = new List<long>();
+            foreach(var x in eventAddressLookups)
+            {
+                if(!x.Active)
                 {
-                    var toRemove = Debuggable?.MemoryCallbacks?.Where(x => x.Address == missingAddress.Item1 && x.Type == EventTypeToMemoryCallbackType(missingAddress.Item2)).Select(x => new Tuple<IMemoryCallback, MemoryCallbackDelegate>(x, x.Callback));
-                    if (toRemove != null)
+                    continue;
+                } 
+                else if((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
+                {
+                    continue;
+                }
+                else
+                {
+                    int length = (x.Length > 0) ? x.Length : 1;
+                    int size = (x.Size > 0) ? x.Size : 1;
+                    long address = x.Address;
+                    for (var i = address; i < address + (length * size); i++)
                     {
-                        foreach (var i in toRemove)
+                        breakAddresses.Add(i);
+                    }
+                    breakAddresses = breakAddresses.Distinct().ToList();
+                    breakAddresses.Sort();
+                }
+            }
+            Console.Out.WriteLine("breakAddresses:");
+            foreach (var address in breakAddresses)
+            {
+                Console.Out.WriteLine(address);
+            }
+            // group each events by address.
+            Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>> breakAddressessTypeBankEventAddressess = new Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>>();
+            foreach(var address in breakAddresses)
+            {
+                foreach(var x in eventAddressLookups)
+                {
+                    if (!x.Active)
+                    {
+                        continue;
+                    }
+                    else if ((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
+                    {
+                        continue;
+                    }
+                    int length = (x.Length > 0) ? x.Length : 1;
+                    int size = (x.Size > 0) ? x.Size : 1;
+                    long eventAddress = x.Address;
+                    if(eventAddress <= address && eventAddress + (length * size) > address)
+                    {
+                        if (!breakAddressessTypeBankEventAddressess.ContainsKey(address))
                         {
-                            Console.WriteLine($"remove: {i.Item1.Name}");
+                            breakAddressessTypeBankEventAddressess.Add(address, new Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>());
                         }
-                        Debuggable?.MemoryCallbacks?.RemoveAll(toRemove.Select(x => x.Item2));
+                        if ((x.EventType & EventType.EventType_Read) != 0)
+                        {
+                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Read))
+                            {
+                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Read, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
+                            }
+                            if(!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read].ContainsKey(x.Bank))
+                            {
+                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
+                            }
+                            var untransformedOverrides = x.getOverrides();
+                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
+                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
+                        }
+                        if ((x.EventType & EventType.EventType_Write) != 0)
+                        {
+                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Write))
+                            {
+                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Write, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
+                            }
+                            if (!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write].ContainsKey(x.Bank))
+                            {
+                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
+                            }
+                            var untransformedOverrides = x.getOverrides();
+                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
+                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
+                        }
+                        if ((x.EventType & EventType.EventType_Execute) != 0)
+                        {
+                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Execute))
+                            {
+                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Execute, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
+                            }
+                            if (!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute].ContainsKey(x.Bank))
+                            {
+                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
+                            }
+                            var untransformedOverrides = x.getOverrides();
+                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
+                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
+                        }
                     }
                 }
             }
-
-            // check for missing breakpoints
-            var missingEventAddressLookups = eventAddressLookups.Where(
-                x => (
-                    x.Active && 
-                    (existingMemoryBreakpoints == null || 
-                    !existingMemoryBreakpoints.Any(y => y.Item1 == x.Address && y.Item2 == x.EventType))
-                )
-                || (x.Active && (x.EventType & EventType.EventType_HardReset) != 0 && HardReset == null)
-                || (x.Active && (x.EventType & EventType.EventType_SoftReset) != 0 && SoftReset == null)
-            ).Select(x => x);
-            foreach(var missingLookup in missingEventAddressLookups)
+            // setup callbacks for addressess.
+            foreach (var breakAddressTypeBankEventAddress in breakAddressessTypeBankEventAddressess)
             {
-                Console.WriteLine($"Adding: {missingLookup.Address} --> {missingLookup.EventType}");
-                if (Platform != null)
+                bool found = false;
+                var address = breakAddressTypeBankEventAddress.Key;
+
+                string identifierDomain = "";
+                long domainAddress = 0;
+                Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(address));
+                string domain = GetMapperBankAndDomain.Item2;
+                GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
+                if (GetBank == null)
                 {
-                    bool found = false;
-                    if ((missingLookup.EventType & EventType.EventType_HardReset) != 0)
+                    GetBank = () =>
                     {
+                        return 0;
+                    };
+                }
+                foreach (SharedPlatformConstants.PlatformMemoryLayoutEntry i in Platform.MemoryLayout)
+                {
+                    if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
+                    {
+                        identifierDomain = Debuggable!.MemoryCallbacks.AvailableScopes.Contains(i.BizhawkIdentifier) ? i.BizhawkIdentifier : i.BizhawkAlternateIdentifier;
                         found = true;
-                        HardReset = new HardResetCallbackDelegate(() =>
-                        {
-                            Console.Out.WriteLine($"_hardreset");
-                            return;
-                        });
-                    }
-                    if ((missingLookup.EventType & EventType.EventType_SoftReset) != 0)
-                    {
-                        found = true;
-                        SoftReset = new SoftResetCallbackDelegate(() =>
-                        {
-                            Console.Out.WriteLine($"_softreset");
-                            return;
-                        });
-                    }
-                    if(Platform.GetMapper == null)
-                    {
-                        throw new Exception("Callbacks aren't supported yet on this platform.");
-                    }
-                    SharedPlatformConstants.PlatformMapper Mapper = Platform.GetMapper(Platform, Emulator, MemoryDomains, Debuggable, BoardInfo?.BoardName);
-                    if(Mapper.GetBankFunctionAndCallbackDomain == null)
-                    {
-                        throw new Exception("Callbacks aren't supported yet on this platform.");
-                    }
-                    Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(missingLookup.Address));
-                    string domain = GetMapperBankAndDomain.Item2;
-                    GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
-                    if (GetBank == null)
-                    {
-                        GetBank = () =>
-                        {
-                            return 0;
-                        };
-                    }
-                    foreach (SharedPlatformConstants.PlatformMemoryLayoutEntry i in Platform.MemoryLayout)
-                    {
-                        if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
-                        {
-                            string identifierDomain = Debuggable.MemoryCallbacks.AvailableScopes.Contains(i.BizhawkIdentifier) ? i.BizhawkIdentifier : i.BizhawkAlternateIdentifier;
-                            found = true;
-                            long address = missingLookup.Address - i.PhysicalStartingAddress;
-                            ushort callbackBank = missingLookup.Bank;
-                            if ((missingLookup.EventType & EventType.EventType_Read) != 0)
-                            {
-                                var untransformedOverrides = missingLookup.getOverrides();
-                                Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                                Debuggable!.MemoryCallbacks!.Add(
-                                    new MemoryCallback(identifierDomain,
-                                                        MemoryCallbackType.Read,
-                                                        $"BizHawkGameHook_{missingLookup.Address:X}_read",
-                                                        new MemoryCallbackDelegate(
-                                                            (address, value, flags) => {
-                                                                int bank = GetBank();
-                                                                if (callbackBank == ushort.MaxValue || bank == callbackBank)
-                                                                {
-                                                                    foreach (var i in overrides)
-                                                                    {
-                                                                        Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
-                                                                        Debuggable.SetCpuRegister(i.Item1, i.Item2);
-                                                                    }
-                                                                    //Console.Out.WriteLine($"BizHawkGameHook_{missingLookup.Address:X}_read, bank: {bank:X}");
-                                                                }
-                                                                return;
-                                                            }
-                                                        ),
-                                                        Convert.ToUInt32(address),
-                                                        null));
-                            }
-                            if ((missingLookup.EventType & EventType.EventType_Write) != 0)
-                            {
-                                var untransformedOverrides = missingLookup.getOverrides();
-                                Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                                Debuggable!.MemoryCallbacks!.Add(
-                                    new MemoryCallback(identifierDomain,
-                                                        MemoryCallbackType.Write,
-                                                        $"BizHawkGameHook_{missingLookup.Address:X}_write",
-                                                        new MemoryCallbackDelegate(
-                                                            (address, value, flags) => {
-                                                                int bank = GetBank();
-                                                                if (callbackBank == ushort.MaxValue || bank == callbackBank)
-                                                                {
-                                                                    foreach (var i in overrides)
-                                                                    {
-                                                                        Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
-                                                                        Debuggable.SetCpuRegister(i.Item1, i.Item2);
-                                                                    }
-                                                                    //Console.Out.WriteLine($"BizHawkGameHook_{missingLookup.Address:X}_write, bank: 0x{bank:X}, value: 0x{value:X}");
-                                                                }
-                                                                return;
-                                                            }
-                                                        ),
-                                                        Convert.ToUInt32(address),
-                                                        null));
-                            }
-                            if ((missingLookup.EventType & EventType.EventType_Execute) != 0)
-                            {
-                                var untransformedOverrides = missingLookup.getOverrides();
-                                Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                                Debuggable!.MemoryCallbacks!.Add(
-                                    new MemoryCallback(identifierDomain,
-                                                        MemoryCallbackType.Execute,
-                                                        $"BizHawkGameHook_{missingLookup.Address:X}_execute",
-                                                        new MemoryCallbackDelegate(
-                                                            (address, value, flags) => {
-                                                                int bank = GetBank();
-                                                                if (callbackBank == ushort.MaxValue || bank == callbackBank)
-                                                                {
-                                                                    foreach (var i in overrides)
-                                                                    {
-                                                                        Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
-                                                                        Debuggable.SetCpuRegister(i.Item1, i.Item2);
-                                                                    }
-                                                                    Console.Out.WriteLine($"BizHawkGameHook_{missingLookup.Address:X}_execute, bank: {bank:X}");
-                                                                }
-                                                                return;
-                                                            }
-                                                        ),
-                                                        Convert.ToUInt32(address),
-                                                        null));
-                            }
-                            break;
-                        }
-                    }
-                    if(!found)
-                    {
-                        throw new Exception($"Unsupported memory address 0x{missingLookup:X}");
+                        domainAddress = address - i.PhysicalStartingAddress;
                     }
                 }
+                if (!found)
+                {
+                    throw new Exception($"Unsupported memory address 0x{address:X}");
+                }
+                foreach (var eventTypeBankEventAddresses in breakAddressTypeBankEventAddress.Value)
+                {
+                    var eventType = eventTypeBankEventAddresses.Key;
+                    var eventBankEventAddress = eventTypeBankEventAddresses.Value;
 
-                //MemoryCallback memoryCallback = new MemoryCallback(scope, type, name, callback, address, mask);
-                //Debuggable?.MemoryCallbacks?.Add()
+                    Console.WriteLine($"Adding event --> {address:X}, {eventType}: BizHawkGameHook_{address:X}_{eventType}.");
+                    Debuggable!.MemoryCallbacks!.Add(
+                        new MemoryCallback(identifierDomain,
+                                            eventType,
+                                            $"BizHawkGameHook_{address:X}_{eventType}",
+                                            new MemoryCallbackDelegate(
+                                                (address, value, flags) =>
+                                                {
+                                                    ushort[] banks = new ushort[] { ushort.MaxValue, Convert.ToUInt16(GetBank()) };
+                                                    foreach(var bank in banks)
+                                                    {
+                                                        if (eventBankEventAddress.ContainsKey(bank))
+                                                        {
+                                                            foreach (var callback in eventBankEventAddress[bank])
+                                                            {
+                                                                var eventAddress = callback.Item1;
+                                                                var overrides = callback.Item2;
+                                                                if (overrides != null)
+                                                                {
+                                                                    foreach (var i in overrides)
+                                                                    {
+                                                                        Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
+                                                                        Debuggable.SetCpuRegister(i.Item1, i.Item2);
+                                                                    }
+                                                                }
+                                                                if (eventType == MemoryCallbackType.Execute)
+                                                                {
+                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, bank: {bank:X}");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    return;
+                                                }
+                                            ),
+                                            Convert.ToUInt32(address),
+                                            null));
+                }
+            }
+            // setup hard soft.
+            foreach (var x in eventAddressLookups)
+            {
+                 if ((x.EventType & EventType.EventType_HardReset) != 0)
+                 {
+                     HardReset = new HardResetCallbackDelegate(() =>
+                     {
+                         Console.Out.WriteLine($"_hardreset");
+                         return;
+                     });
+                 }
+                 if ((x.EventType & EventType.EventType_SoftReset) != 0)
+                 {
+                     SoftReset = new SoftResetCallbackDelegate(() =>
+                     {
+                         Console.Out.WriteLine($"_softreset");
+                         return;
+                     });
+                 }
             }
             GameHookEventsLookup_Accessor?.Write(0, (byte)0);
         }

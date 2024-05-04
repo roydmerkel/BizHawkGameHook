@@ -46,13 +46,13 @@ namespace GameHook.Domain.GameHookEvents
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
                     ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
                     _oldAddress = _address;
-                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                 }
 
                 FieldsChanged.Add("address");
@@ -87,13 +87,13 @@ namespace GameHook.Domain.GameHookEvents
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
                     ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
                     _oldAddress = _address;
-                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                 }
 
                 FieldsChanged.Add("address");
@@ -134,7 +134,7 @@ namespace GameHook.Domain.GameHookEvents
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                        SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                     }
                 }
                 else if (_bank != null && _oldBank != null && _oldBank != _bank)
@@ -146,7 +146,7 @@ namespace GameHook.Domain.GameHookEvents
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                        SetEvent(_address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0);
                     }
                 }
 
