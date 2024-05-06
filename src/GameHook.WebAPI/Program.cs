@@ -32,6 +32,7 @@ namespace GameHook.WebAPI
                                     .WriteTo.File(BuildEnvironment.LogFilePath)
                                     .CreateBootstrapLogger();
 
+                Log.Logger.Information("log path: " + BuildEnvironment.LogFilePath);
                 Host.CreateDefaultBuilder()
                         .ConfigureWebHostDefaults(x => x.UseStartup<Startup>())
                         .ConfigureAppConfiguration(x =>
@@ -39,9 +40,14 @@ namespace GameHook.WebAPI
                             // Add a custom appsettings.user.json file if
                             // the user wants to override their settings.
 
+                            Log.Logger.Information("Adding: " + EmbededResources.appsettings_json_path);
                             x.AddJsonStream(EmbededResources.appsettings_json);
+                            Log.Logger.Information("Adding: " + BuildEnvironment.ConfigurationDirectoryAppsettingsFilePath);
                             x.AddJsonFile(BuildEnvironment.ConfigurationDirectoryAppsettingsFilePath, true, false);
+                            Log.Logger.Information("Adding: " + BuildEnvironment.BinaryDirectoryGameHookFilePath);
                             x.AddJsonFile(BuildEnvironment.BinaryDirectoryGameHookFilePath, true, false);
+                            Log.Logger.Information("Adding: Environment variables.");
+                            x.AddEnvironmentVariables();
                         })
                         .UseSerilog((context, services, configuration) => configuration.ReadFrom.Configuration(context.Configuration))
                         .Build()

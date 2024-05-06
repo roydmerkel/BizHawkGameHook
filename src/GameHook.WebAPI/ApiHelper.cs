@@ -5,7 +5,8 @@ namespace GameHook.WebAPI
 {
     public static class EmbededResources
     {
-        public static Stream appsettings_json => ApiHelper.GetEmbeddedResourceStream("GameHook.WebAPI.appsettings.json");
+        public static string appsettings_json_path => "GameHook.WebAPI.appsettings.json";
+        public static Stream appsettings_json => ApiHelper.GetEmbeddedResourceStream(appsettings_json_path);
         public static Stream index_html => ApiHelper.GetEmbeddedResourceStream("GameHook.WebAPI.wwwroot.index.html");
         public static Stream favicon_ico => ApiHelper.GetEmbeddedResourceStream("GameHook.WebAPI.wwwroot.favicon.ico");
         public static Stream site_css => ApiHelper.GetEmbeddedResourceStream("GameHook.WebAPI.wwwroot.site.css");
