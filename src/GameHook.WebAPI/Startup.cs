@@ -158,6 +158,8 @@ namespace GameHook.WebAPI
 
             logger.LogInformation("GameHook startup completed.");
             logger.LogInformation($"UI is accessible at {string.Join(", ", appSettings.Urls)}");
+            logger.LogInformation($"RETROARCH_LISTEN_PORT is {appSettings.RETROARCH_LISTEN_PORT}");
+            logger.LogInformation($"RETROARCH_LISTEN_IP_ADDRESS is {appSettings.RETROARCH_LISTEN_IP_ADDRESS}");
         }
     }
 }

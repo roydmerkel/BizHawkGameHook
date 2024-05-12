@@ -23,6 +23,8 @@ namespace GameHook.Domain
             RETROARCH_LISTEN_PORT = int.Parse(configuration.GetRequiredValue("RETROARCH_LISTEN_PORT"));
             RETROARCH_READ_PACKET_TIMEOUT_MS = int.Parse(configuration.GetRequiredValue("RETROARCH_READ_PACKET_TIMEOUT_MS"));
             RETROARCH_DELAY_MS_BETWEEN_READS = int.Parse(configuration.GetRequiredValue("RETROARCH_DELAY_MS_BETWEEN_READS"));
+            RETROARCH_MAX_MEMORY_BLOCK_SIZE = int.Parse(configuration.GetRequiredValue("RETROARCH_MAX_MEMORY_BLOCK_SIZE"));
+            RETROARCH_READ_RETRY_COUNT = int.Parse(configuration.GetRequiredValue("RETROARCH_READ_RETRY_COUNT"));
 
             RETROARCH_DELAY_MS_BETWEEN_READS = int.Parse(configuration.GetRequiredValue("RETROARCH_DELAY_MS_BETWEEN_READS"));
 
@@ -66,6 +68,8 @@ namespace GameHook.Domain
         public int RETROARCH_LISTEN_PORT { get; }
         public int RETROARCH_READ_PACKET_TIMEOUT_MS { get; }
         public int RETROARCH_DELAY_MS_BETWEEN_READS { get; }
+        public int RETROARCH_MAX_MEMORY_BLOCK_SIZE { get; }
+        public int RETROARCH_READ_RETRY_COUNT { get; }
 
         public int BIZHAWK_DELAY_MS_BETWEEN_READS { get; }
 

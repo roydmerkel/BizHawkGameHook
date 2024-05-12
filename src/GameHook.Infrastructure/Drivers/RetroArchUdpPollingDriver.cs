@@ -125,9 +125,9 @@ namespace GameHook.Infrastructure.Drivers
             Logger.LogTrace($"[Outgoing Packet] {outgoingPayload}");
         }
 
-        private async Task<byte[]> ReadMemoryAddress(uint memoryAddress, uint length)
+        private async Task<byte[]> ReadMemoryAddress(uint memoryAddress, uint startAddress, uint length)
         {
-            var command = $"READ_CORE_MEMORY {ToRetroArchHexdecimalString(memoryAddress)}";
+            var command = $"READ_CORE_MEMORY {ToRetroArchHexdecimalString(startAddress)}";
             await SendPacket(command, $"{length}");
 
             var responsesKey = $"{command} {length}";
@@ -143,7 +143,7 @@ namespace GameHook.Infrastructure.Drivers
 
             if (readCoreMemoryResult == null)
             {
-                Logger.LogDebug($"A timeout occurred when waiting for ReadMemoryAddress reply from RetroArch. ({responsesKey})");
+                Logger.LogDebug($"A timeout occurred when waiting for ReadMemoryAddress reply from RetroArch, startAddress: {startAddress:X}, ({responsesKey})");
 
                 throw new DriverTimeoutException(memoryAddress, "RetroArch", null);
             }
@@ -177,19 +177,88 @@ namespace GameHook.Infrastructure.Drivers
 
         public async Task<Dictionary<uint, byte[]>> ReadBytes(IEnumerable<MemoryAddressBlock> blocks)
         {
-            var results = await Task.WhenAll(blocks.Select(async x =>
+            uint RETROARCH_MAX_MEMORY_BLOCK_SIZE = Convert.ToUInt32(_appSettings.RETROARCH_MAX_MEMORY_BLOCK_SIZE);
+            // divide the data into blocks.
+            List<Tuple<uint, uint, uint>> toReadBlocks = new List<Tuple<uint, uint, uint>>();
+            foreach (var block in blocks)
             {
-                // We add one here because otherwise we have an off-by-one error.
+                long left = (block.EndingAddress - block.StartingAddress) + 1;
+                uint startingAddress = block.StartingAddress;
 
-                // Example: 0xAFFF - 0xA000 is 4095 in decimal.
-                // We want to actually return 4096 bytes -- we want to include 0xAFFF.
-                // So we add +1 to the result.
+                while (left > 0)
+                {
+                    uint toRead = Math.Min(RETROARCH_MAX_MEMORY_BLOCK_SIZE, Convert.ToUInt32(left));
+                    Tuple<uint, uint, uint> readBlock = new Tuple<uint, uint, uint>(block.StartingAddress, startingAddress, toRead);
+                    startingAddress += RETROARCH_MAX_MEMORY_BLOCK_SIZE;
+                    left -= RETROARCH_MAX_MEMORY_BLOCK_SIZE;
+                    toReadBlocks.Add(readBlock);
+                }
+            }
+            // read the blocks.
+            IList<Tuple<uint, uint, byte[]>> results = new List<Tuple<uint, uint, byte[]>>();
+            IList<Exception> exceptions = new List<Exception>();
+            for (var i = 0; i < _appSettings.RETROARCH_READ_RETRY_COUNT + 1 && toReadBlocks.Count > 0; i++)
+            {
+                exceptions = new List<Exception>();
+                if (i > 0)
+                    Logger.LogInformation($"Timeout occured, retry: {i}");
+                List<Task<Tuple<uint, uint, byte[]>>> tasks = toReadBlocks.Select(async x =>
+                {
+                    // We add one here because otherwise we have an off-by-one error.
 
-                var data = await ReadMemoryAddress(x.StartingAddress, (x.EndingAddress - x.StartingAddress) + 1);
-                return new KeyValuePair<uint, byte[]>(x.StartingAddress, data);
-            }));
+                    // Example: 0xAFFF - 0xA000 is 4095 in decimal.
+                    // We want to actually return 4096 bytes -- we want to include 0xAFFF.
+                    // So we add +1 to the result.
 
-            return results.ToDictionary(x => x.Key, x => x.Value);
+                    var data = await ReadMemoryAddress(x.Item1, x.Item2, x.Item3);
+                    return new Tuple<uint, uint, byte[]>(x.Item1, x.Item2, data);
+                }).ToList();
+                var taskResults = await Task.WhenAny(Task.WhenAll(tasks));
+                for (var idx = tasks.Count - 1; idx >= 0; idx--)
+                {
+                    if (tasks[idx].Status == TaskStatus.RanToCompletion)
+                    {
+                        toReadBlocks.Remove(toReadBlocks[idx]);
+                        results.Add(tasks[idx].Result);
+                    }
+                    else if (tasks[idx].Status == TaskStatus.Faulted && tasks[idx].Exception != null)
+                    {
+                        exceptions.Add(tasks[idx].Exception);
+                    }
+                }
+            }
+            if (toReadBlocks.Count() > 0)
+            {
+                if (exceptions != null && exceptions.Count > 0)
+                {
+                    throw exceptions[0];
+                }
+                else
+                {
+                    throw new Exception("Timeout occured, but exception was lost, so location is unknown.");
+                }
+            }
+            // concatinate the blocks back into kv pairs.
+            var keys = results.Select(x => x.Item1).Distinct().Order().ToArray();
+            List<KeyValuePair<uint, byte[]>> kvList = new List<KeyValuePair<uint, byte[]>>();
+            foreach (var key in keys)
+            {
+                byte[] data = new byte[0];
+                var subkeys = results.Where(x => x.Item1 == key).Select(x => x.Item2).Distinct().Order().ToArray();
+                foreach (var subkey in subkeys)
+                {
+                    var dataArrays = results.Where(x => x.Item1 == key && x.Item2 == subkey).Select(x => x.Item3);
+                    foreach (var val in dataArrays)
+                    {
+                        data = data.Concat(val).ToArray();
+                    }
+                }
+
+                kvList.Add(new KeyValuePair<uint, byte[]>(key, data));
+            }
+
+            // return the dictionary.
+            return kvList.ToDictionary(x => x.Key, x => x.Value);
         }
 
         public Task EstablishConnection()
