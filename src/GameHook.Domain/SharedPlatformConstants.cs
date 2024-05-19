@@ -8,7 +8,7 @@ public static class SharedPlatformConstants
         public string BizhawkIdentifier { get; set; } = string.Empty;
         public int? FrameSkipDefault { get; set; } = null;
 
-        public PlatformMemoryLayoutEntry[] MemoryLayout { get; set; } = Array.Empty<PlatformMemoryLayoutEntry>();
+        public PlatformMemoryLayoutEntry[] MemoryLayout { get; set; } = [];
     }
 
     public record PlatformMemoryLayoutEntry
@@ -28,184 +28,185 @@ public static class SharedPlatformConstants
     public const int BIZHAWK_MAX_DATA_EVENTS = 256 * 2;
     public const int BIZHAWK_MAX_EXECUTION_EVENTS_SIZE = 256;
     public const int BIZHAWK_MAX_EVENTS_SIZE = BIZHAWK_MAX_DATA_EVENTS + BIZHAWK_MAX_EXECUTION_EVENTS_SIZE;
+    public const int BIZHAWK_MAX_WRITE_CALLS_SIZE = 256 * 2;
 
     public static readonly IEnumerable<PlatformEntry> Information = new List<PlatformEntry>()
     {
-        new PlatformEntry
+        new()
         {
             IsBigEndian = true,
             BizhawkIdentifier = "NES",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry
+            MemoryLayout =
+            [
+                new()
                 {
                     BizhawkIdentifier = "RAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x00,
                     Length = 0x800
                 }
-            }
+            ]
         },
-        new PlatformEntry
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "SNES",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry
+            MemoryLayout =
+            [
+                new()
                 {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x003000,
                     Length = 0x112
                 },
-                new PlatformMemoryLayoutEntry
+                new()
                 {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x400000,
                     Length = 0x3EFF
                 },
-                new PlatformMemoryLayoutEntry
+                new()
                 {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x7E0000,
                     Length = 0x1FFFF
                 }
-            }
+            ]
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "GB",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry {
+            MemoryLayout =
+            [
+                new() {
                     BizhawkIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
                     PhysicalStartingAddress = 0xA000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
                     PhysicalStartingAddress = 0xC000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 }
-            }
+            ]
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "SGB",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry {
+            MemoryLayout =
+            [
+                new() {
                     BizhawkIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
                     PhysicalStartingAddress = 0xA000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
                     PhysicalStartingAddress = 0xC000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 }
-            }
+            ]
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "GBC",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry {
+            MemoryLayout =
+            [
+                new() {
                     BizhawkIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
                     PhysicalStartingAddress = 0xA000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
                     PhysicalStartingAddress = 0xC000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 }
-            }
+            ]
         },
-        new PlatformEntry
+        new()
         {
             IsBigEndian = true,
             BizhawkIdentifier = "GBA",
-            MemoryLayout = new PlatformMemoryLayoutEntry[]
-            {
-                new PlatformMemoryLayoutEntry
+            MemoryLayout =
+            [
+                new()
                 {
                     BizhawkIdentifier = "EWRAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x02000000,
                     Length = 0x00040000
                 },
-                new PlatformMemoryLayoutEntry
+                new()
                 {
                     BizhawkIdentifier = "IWRAM",
                     CustomPacketTransmitPosition = 0x00040000 + 1,
                     PhysicalStartingAddress = 0x03000000,
                     Length = 0x00008000
                 }
-            }
+            ]
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = true,
             BizhawkIdentifier = "NDS",
             FrameSkipDefault = 15,
-            MemoryLayout = new PlatformMemoryLayoutEntry[] {
-                new PlatformMemoryLayoutEntry {
+            MemoryLayout = [
+                new() {
                     BizhawkIdentifier = "Main RAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x2000000,
                     Length = 0x400000
                 }
-            }
+            ]
         }
     };
 }

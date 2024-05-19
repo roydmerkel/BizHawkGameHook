@@ -65,7 +65,7 @@ namespace GameHook.Domain.GameHookEvents
         }
 
         public abstract void ClearEvent(MemoryAddress address, ushort bank);
-        public abstract void SetEvent(MemoryAddress address, ushort bank, string? bits, int length, int size);
+        public abstract void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size);
 
         public void UpdateAddressFromProperty()
         {
@@ -79,13 +79,13 @@ namespace GameHook.Domain.GameHookEvents
                 else if(Property.Address != null && _oldAddress == null)
                 {
                     _oldAddress = Property.Address;
-                    SetEvent(Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0);
+                    SetEvent(Name, Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0);
                 }
                 else if(Property.Address != null && _oldAddress != null && Property.Address.Value != _oldAddress.Value)
                 {
                     ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
                     _oldAddress = Property.Address;
-                    SetEvent(Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0);
+                    SetEvent(Name, Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0);
                 }
             }
         }

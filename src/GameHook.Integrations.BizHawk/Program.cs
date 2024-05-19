@@ -3,28 +3,22 @@ using BizHawk.Client.EmuHawk;
 using BizHawk.Common;
 using BizHawk.Common.StringExtensions;
 using BizHawk.Emulation.Common;
-using BizHawk.Emulation.Cores.Components.M68000;
-using BizHawk.Emulation.Cores.Nintendo.BSNES;
 using BizHawk.Emulation.Cores.Nintendo.Gameboy;
 using BizHawk.Emulation.Cores.Nintendo.GBHawk;
-using BizHawk.Emulation.Cores.Nintendo.GBHawkLink;
-using BizHawk.Emulation.Cores.Nintendo.GBHawkLink3x;
-using BizHawk.Emulation.Cores.Nintendo.GBHawkLink4x;
 using BizHawk.Emulation.Cores.Nintendo.Sameboy;
 using BizHawk.Emulation.Cores.Nintendo.SNES;
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics.Tracing;
 using System.Drawing;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Runtime.Remoting.Messaging;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
-using static BizHawk.Emulation.Cores.Computers.AmstradCPC.CRCT_6845;
-using static GameHookIntegration.SharedPlatformConstants.PlatformEntry;
+using static GameHook.Integrations.BizHawk.BizHawkInterface;
+using static GameHookIntegration.SharedPlatformConstants;
 using static GameHookIntegration.SharedPlatformConstants.PlatformMapper;
 
 namespace GameHookIntegration;
@@ -32,238 +26,26 @@ namespace GameHookIntegration;
 [ExternalTool("GameHook.Integrations.BizHawk")]
 public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternalToolForm, IDisposable
 {
-    [Flags]
-    public enum EventType
+    private static void Fill<T>(T[] array, T value, int startIndex, int count)
     {
-        EventType_Undefined = 0,
-        EventType_Read = 1,
-        EventType_Write = 2,
-        EventType_Execute = 4,
-        EventType_HardReset = 8,
-        EventType_SoftReset = 16,
-        EventType_ReadWrite = EventType_Read | EventType_Write,
-        EventType_ReadExecute = EventType_Read | EventType_Execute,
-        EventType_WriteExecute = EventType_Write | EventType_Execute,
-        EventType_ReadWriteExecute = EventType_Read | EventType_Write | EventType_Execute,
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct EventAddressRegisterOverride
-    {
-        public ulong Register; // actually an 8 byte ascii string
-        public ulong Value;
-
-        public EventAddressRegisterOverride() : this("", 0x00)
+        if (array == null)
         {
-        }
-        public EventAddressRegisterOverride(string registerName, ulong value)
-        {
-            if (registerName == null)
-            {
-                throw new ArgumentNullException(nameof(registerName));
-            }
-            // string needs to be same size as Register (ulong)
-            //
-            // TODO: a fixed size char array would work better, but I would require
-            // adding unsafe and I'm not sure if this would break BizHawk or cause
-            // build headaches.
-            else if (registerName.Length < 0 || registerName.Length > sizeof(ulong) - 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(registerName));
-            }
-            // encode as ASCII, don't need custom check as c# throws an exception for
-            // trying to encode non-ascii strings as ascii.
-            else
-            {
-                List<byte> bytes = new List<byte>(Encoding.ASCII.GetBytes(registerName));
-                if (bytes == null)
-                {
-                    bytes = new List<byte> { };
-                }
-                while (bytes.Count < sizeof(ulong))
-                {
-                    bytes.Add(0);
-                }
-                Register = BitConverter.ToUInt64(bytes.ToArray(), 0);
-            }
-            Value = value;
+            throw new ArgumentNullException(nameof(array));
         }
 
-        public string getRegisterString()
+        if ((uint)startIndex > (uint)array.Length)
         {
-            byte[] bytes = BitConverter.GetBytes(Register);
-            string register = Encoding.ASCII.GetString(bytes);
-            register = register.TrimEnd('\0');
-
-            return register;
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct EventAddress
-    {
-        const int MaxRegisterOverride = 6;
-        const int MaxBitsLength = 64 * 8 / 8;
-
-        public bool Active;
-        public long Address;
-        public ushort Bank;
-        public EventType EventType;
-        public EventAddressRegisterOverride EventAddressRegisterOverride0;
-        public EventAddressRegisterOverride EventAddressRegisterOverride1;
-        public EventAddressRegisterOverride EventAddressRegisterOverride2;
-        public EventAddressRegisterOverride EventAddressRegisterOverride3;
-        public EventAddressRegisterOverride EventAddressRegisterOverride4;
-        public EventAddressRegisterOverride EventAddressRegisterOverride5;
-        public UInt64 Bits0;
-        public UInt64 Bits1;
-        public UInt64 Bits2;
-        public UInt64 Bits3;
-        public UInt64 Bits4;
-        public UInt64 Bits5;
-        public UInt64 Bits6;
-        public UInt64 Bits7;
-        public int Length;
-        public int Size;
-
-        public EventAddress() : this(false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0)
-        {
-        }
-        public EventAddress(bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size)
-        {
-            EventAddressRegisterOverride0 = new EventAddressRegisterOverride();
-            EventAddressRegisterOverride1 = new EventAddressRegisterOverride();
-            EventAddressRegisterOverride2 = new EventAddressRegisterOverride();
-            EventAddressRegisterOverride3 = new EventAddressRegisterOverride();
-            EventAddressRegisterOverride4 = new EventAddressRegisterOverride();
-            EventAddressRegisterOverride5 = new EventAddressRegisterOverride();
-            Bits0 = 0;
-            Bits1 = 0;
-            Bits2 = 0;
-            Bits3 = 0;
-            Bits4 = 0;
-            Bits5 = 0;
-            Bits6 = 0;
-            Bits7 = 0;
-            Length = length;
-            Size = (size > 0) ? size : 1;
-
-            Active = active;
-            Address = address;
-            Bank = bank;
-            EventType = eventType;
-            if (eventAddressRegisterOverrides == null)
-            {
-                throw new ArgumentNullException(nameof(eventAddressRegisterOverrides));
-            }
-            else if (eventAddressRegisterOverrides.Count() < 0 || eventAddressRegisterOverrides.Count() > MaxRegisterOverride)
-            {
-                throw new ArgumentOutOfRangeException(nameof(eventAddressRegisterOverrides));
-            }
-            else
-            {
-                int idx = 0;
-                // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                // attribute can be used to bypass.
-                foreach (EventAddressRegisterOverride eventAddressRegisterOverride in eventAddressRegisterOverrides)
-                {
-                    switch (idx)
-                    {
-                        case 0:
-                            EventAddressRegisterOverride0 = eventAddressRegisterOverride;
-                            break;
-                        case 1:
-                            EventAddressRegisterOverride1 = eventAddressRegisterOverride;
-                            break;
-                        case 2:
-                            EventAddressRegisterOverride2 = eventAddressRegisterOverride;
-                            break;
-                        case 3:
-                            EventAddressRegisterOverride3 = eventAddressRegisterOverride;
-                            break;
-                        case 4:
-                            EventAddressRegisterOverride4 = eventAddressRegisterOverride;
-                            break;
-                        case 5:
-                            EventAddressRegisterOverride5 = eventAddressRegisterOverride;
-                            break;
-                        default:
-                            throw new Exception("unexpected index");
-                    }
-                    idx++;
-                }
-            }
-            if (bits == null)
-            {
-                // noop, bits is already initialized to 0
-            }
-            else if (bits.Count() < 0 || bits.Count() > MaxBitsLength)
-            {
-                throw new ArgumentOutOfRangeException(nameof(bits));
-            }
-            else
-            {
-                // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                // attribute can be used to bypass.
-                List<byte> bitsBytes = new List<byte>(Encoding.ASCII.GetBytes(bits));
-                if (bitsBytes == null)
-                {
-                    bitsBytes = new List<byte> { };
-                }
-                while (bitsBytes.Count < MaxBitsLength)
-                {
-                    bitsBytes.Add(0);
-                }
-                byte[] bitsBytsArray = bitsBytes.ToArray();
-                Bits0 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 0).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits1 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 1).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits2 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 2).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits3 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 3).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits4 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 4).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits5 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 5).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits6 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 6).Take(sizeof(UInt64)).ToArray(), 0);
-                Bits7 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(UInt64) * 7).Take(sizeof(UInt64)).ToArray(), 0);
-            }
+            throw new ArgumentOutOfRangeException(nameof(array), "Index must be less then array length.");
         }
 
-        public EventAddressRegisterOverride[] getOverrides()
+        if ((uint)count > (uint)(array.Length - startIndex))
         {
-            List<EventAddressRegisterOverride> overrides = new List<EventAddressRegisterOverride>();
-            foreach (var i in new List<EventAddressRegisterOverride> {EventAddressRegisterOverride0,
-                        EventAddressRegisterOverride1,
-                        EventAddressRegisterOverride2,
-                        EventAddressRegisterOverride3,
-                        EventAddressRegisterOverride4,
-                        EventAddressRegisterOverride5})
-            {
-                if ((i.Register & 0xFFUL) != 0)
-                {
-                    overrides.Add(i);
-                }
-            }
-
-            return overrides.ToArray();
+            throw new ArgumentOutOfRangeException(nameof(array), "count plus start index must be less then or equal to array length");
         }
 
-        public string getBitsString()
+        for (int i = startIndex; i < startIndex + count; i++)
         {
-            IEnumerable<byte> bytes = BitConverter.GetBytes(Bits0).ToList();
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits1).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits2).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits3).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits4).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits5).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits6).ToList());
-            bytes = bytes.Concat(BitConverter.GetBytes(Bits7).ToList());
-
-            string bits = Encoding.ASCII.GetString(bytes.ToArray());
-            bits = bits.TrimEnd('\0');
-
-            return bits;
+            array[i] = value;
         }
     }
 
@@ -293,8 +75,15 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
     private readonly MemoryMappedFile? GameHookEventsLookup_MemoryMappedFile;
     private readonly MemoryMappedViewAccessor? GameHookEventsLookup_Accessor;
-    private int GameHookEventsLookup_ElementSize;
+    private readonly int GameHookEventsLookup_ElementSize;
     private readonly Semaphore GameHookEvents_eventsSemaphore;
+
+    private readonly MemoryMappedFile? GameHookWriteCall_MemoryMappedFile;
+    private readonly MemoryMappedViewAccessor? GameHookWriteCall_Accessor;
+    private readonly int GameHookWriteCall_ElementSize;
+    private readonly Semaphore GameHookWriteCall_Semaphore;
+
+    private readonly Dictionary<MemoryDomain, Dictionary<long, byte>> InstantWriteMap;
 
     private byte[] DataBuffer { get; } = new byte[SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE];
 
@@ -333,6 +122,22 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         GameHookEventsLookup_Accessor = GameHookEventsLookup_MemoryMappedFile.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
 
         GameHookEvents_eventsSemaphore = new Semaphore(initialCount: 1, maximumCount: 1, name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore");
+
+        GameHookWriteCall_ElementSize = Marshal.SizeOf(typeof(WriteCall));
+        long writeEventsMappedSize = sizeof (int) + sizeof (int) + GameHookWriteCall_ElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE; // front, rear, array.
+        GameHookWriteCall_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", writeEventsMappedSize, MemoryMappedFileAccess.ReadWrite);
+        GameHookWriteCall_Accessor = GameHookWriteCall_MemoryMappedFile.CreateViewAccessor(0, writeEventsMappedSize, MemoryMappedFileAccess.ReadWrite);
+
+        WriteCall template = new();
+        WriteCall[] writeCalls = new WriteCall[SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE];
+        Fill(writeCalls, template, 0, writeCalls.Length);
+        GameHookWriteCall_Accessor.Write(0, -1);
+        GameHookWriteCall_Accessor.Write(sizeof(int), -1);
+        GameHookWriteCall_Accessor.WriteArray(sizeof(int) * 2, writeCalls, 0, writeCalls.Length);
+
+        GameHookWriteCall_Semaphore = new Semaphore(initialCount: 1, maximumCount: 1, name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
+
+        InstantWriteMap = new();
     }
 
     private void SyncEvents()
@@ -376,6 +181,66 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 throw new Exception("Callbacks aren't supported yet on this platform.");
             }
 
+            // process events into tuples.
+            int idx = -1;
+            List<Tuple<int, long, string, int[], EventAddress, Tuple<string, int>[]>> processedEventAddressLookups = new();
+            foreach (var x in eventAddressLookups)
+            {
+                idx++;
+                if (!x.Active)
+                {
+                    continue;
+                }
+                else if ((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
+                {
+                    continue;
+                }
+                else
+                {
+                    var untransformedOverrides = x.GetOverrides();
+                    Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.GetRegisterString(), Convert.ToInt32(x.Value))).ToArray();
+                    string bitsString = x.GetBitsString();
+                    List<int> bits = new();
+                    if (bitsString != null && bitsString != "")
+                    {
+                        foreach (var subset in bitsString.Split(','))
+                        {
+                            string[] range = subset.Split('-');
+                            if (range.Length > 2 || range.Length <= 0 || range[0] == "")
+                            {
+                                throw new Exception("missing string or missing hyphen");
+                            }
+                            else if (range.Length == 1)
+                            {
+                                if (int.TryParse(range[0], out int startEnd))
+                                {
+                                    int start = startEnd;
+                                    int end = startEnd;
+                                    bits.AddRange(Enumerable.Range(start, end - start + 1));
+                                }
+                                else
+                                {
+                                    throw new Exception($"unexpected range: {subset}");
+                                }
+                            }
+                            else
+                            {
+                                if (int.TryParse(range[0], out int start) && int.TryParse(range[1], out int end))
+                                {
+                                    bits.AddRange(Enumerable.Range(start, end - start + 1));
+                                }
+                                else
+                                {
+                                    throw new Exception($"unexpected range: {subset}");
+                                }
+                            }
+                        }
+                    }
+                    Tuple<int, long, string, int[], EventAddress, Tuple<string, int>[]> processedEventAddressLookup = new(idx, 0, x.GetNameString(), bits.ToArray(), x, overrides);
+                    processedEventAddressLookups.Add(processedEventAddressLookup);
+                }
+            }
+
             // clear all current breakpoints.
             Console.WriteLine($"Clearing events.");
             Debuggable?.MemoryCallbacks?.Clear();
@@ -383,29 +248,18 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             SoftReset = null;
 
             // get list of unique addressess to break on.
-            List<long> breakAddresses = new List<long>();
-            foreach(var x in eventAddressLookups)
+            List<long> breakAddresses = new();
+            foreach(var x in processedEventAddressLookups)
             {
-                if(!x.Active)
-                {
-                    continue;
-                } 
-                else if((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
-                {
-                    continue;
-                }
-                else
-                {
-                    int length = (x.Length > 0) ? x.Length : 1;
-                    int size = (x.Size > 0) ? x.Size : 1;
-                    long address = x.Address;
+                    int length = (x.Item5.Length > 0) ? x.Item5.Length : 1;
+                    int size = (x.Item5.Size > 0) ? x.Item5.Size : 1;
+                    long address = x.Item5.Address;
                     for (var i = address; i < address + (length * size); i++)
                     {
                         breakAddresses.Add(i);
                     }
                     breakAddresses = breakAddresses.Distinct().ToList();
                     breakAddresses.Sort();
-                }
             }
             Console.Out.WriteLine("breakAddresses:");
             foreach (var address in breakAddresses)
@@ -413,69 +267,47 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 Console.Out.WriteLine(address);
             }
             // group each events by address.
-            Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>> breakAddressessTypeBankEventAddressess = new Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>>();
+            EventType[] eventTypes = new EventType[] { EventType.EventType_Read, EventType.EventType_Write, EventType.EventType_Execute };
+            MemoryCallbackType[] callbacktypes = new MemoryCallbackType[] { MemoryCallbackType.Read, MemoryCallbackType.Write, MemoryCallbackType.Execute };
+            Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>>> breakAddressessTypeBankEventAddressess = new();
             foreach(var address in breakAddresses)
             {
-                foreach(var x in eventAddressLookups)
+                foreach(var x in processedEventAddressLookups)
                 {
-                    if (!x.Active)
-                    {
-                        continue;
-                    }
-                    else if ((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
-                    {
-                        continue;
-                    }
-                    int length = (x.Length > 0) ? x.Length : 1;
-                    int size = (x.Size > 0) ? x.Size : 1;
-                    long eventAddress = x.Address;
-                    if(eventAddress <= address && eventAddress + (length * size) > address)
+                    int length = (x.Item5.Length > 0) ? x.Item5.Length : 1;
+                    int size = (x.Item5.Size > 0) ? x.Item5.Size : 1;
+                    long eventAddress = x.Item5.Address;
+
+                    if (eventAddress <= address && eventAddress + (length * size) > address)
                     {
                         if (!breakAddressessTypeBankEventAddressess.ContainsKey(address))
                         {
-                            breakAddressessTypeBankEventAddressess.Add(address, new Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>>());
+                            breakAddressessTypeBankEventAddressess.Add(address, new Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>>());
                         }
-                        if ((x.EventType & EventType.EventType_Read) != 0)
+                        int callbackTypeIdx = -1;
+                        foreach (var eventType in eventTypes)
                         {
-                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Read))
+                            callbackTypeIdx++;
+                            if ((x.Item5.EventType & eventType) != 0)
                             {
-                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Read, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
+                                if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(callbacktypes[callbackTypeIdx]))
+                                {
+                                    breakAddressessTypeBankEventAddressess[address].Add(callbacktypes[callbackTypeIdx], new Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>());
+                                }
+                                if (!breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]].ContainsKey(x.Item5.Bank))
+                                {
+                                    breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]].Add(x.Item5.Bank, new List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>());
+                                }
+                                int[]? bits = null;
+                                if(x.Item4 != null && x.Item4.Length >= 1)
+                                {
+                                    long offset = address - eventAddress;
+                                    int bitOffsetStart = Convert.ToInt32(offset * 8);
+                                    int bitOffsetEnd = bitOffsetStart + 8;
+                                    bits = x.Item4.Where(x => x >= bitOffsetStart && x < bitOffsetEnd).Select(x => x - bitOffsetStart).ToArray();
+                                }
+                                breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]][x.Item5.Bank].Add(new Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>(x.Item1, address - eventAddress, x.Item3, bits, x.Item5, x.Item6));
                             }
-                            if(!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read].ContainsKey(x.Bank))
-                            {
-                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
-                            }
-                            var untransformedOverrides = x.getOverrides();
-                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Read][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
-                        }
-                        if ((x.EventType & EventType.EventType_Write) != 0)
-                        {
-                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Write))
-                            {
-                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Write, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
-                            }
-                            if (!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write].ContainsKey(x.Bank))
-                            {
-                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
-                            }
-                            var untransformedOverrides = x.getOverrides();
-                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Write][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
-                        }
-                        if ((x.EventType & EventType.EventType_Execute) != 0)
-                        {
-                            if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(MemoryCallbackType.Execute))
-                            {
-                                breakAddressessTypeBankEventAddressess[address].Add(MemoryCallbackType.Execute, new Dictionary<ushort, List<Tuple<EventAddress, Tuple<string, int>[]>>>());
-                            }
-                            if (!breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute].ContainsKey(x.Bank))
-                            {
-                                breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute].Add(x.Bank, new List<Tuple<EventAddress, Tuple<string, int>[]>>());
-                            }
-                            var untransformedOverrides = x.getOverrides();
-                            Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.getRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                            breakAddressessTypeBankEventAddressess[address][MemoryCallbackType.Execute][x.Bank].Add(new Tuple<EventAddress, Tuple<string, int>[]>(x, overrides));
                         }
                     }
                 }
@@ -491,13 +323,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(address));
                 string domain = GetMapperBankAndDomain.Item2;
                 GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
-                if (GetBank == null)
-                {
-                    GetBank = () =>
+                GetBank ??= () =>
                     {
                         return 0;
                     };
-                }
                 foreach (SharedPlatformConstants.PlatformMemoryLayoutEntry i in Platform.MemoryLayout)
                 {
                     if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
@@ -531,8 +360,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                         {
                                                             foreach (var callback in eventBankEventAddress[bank])
                                                             {
-                                                                var eventAddress = callback.Item1;
-                                                                var overrides = callback.Item2;
+                                                                var eventIdx = callback.Item1;
+                                                                var eventOffset = callback.Item2;
+                                                                var eventName = callback.Item3;
+                                                                var eventBits = callback.Item4;
+                                                                var eventAddress = callback.Item5;
+                                                                var overrides = callback.Item6;
                                                                 if (overrides != null)
                                                                 {
                                                                     foreach (var i in overrides)
@@ -543,7 +376,36 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                 }
                                                                 if (eventType == MemoryCallbackType.Execute)
                                                                 {
-                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, bank: {bank:X}");
+                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventIdx: {eventIdx}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                }
+                                                                else if(eventType == MemoryCallbackType.Read)
+                                                                {
+                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventIdx: {eventIdx}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                    byte newByte = 0;
+
+                                                                    MemoryDomain domain = MemoryDomains![identifierDomain];
+                                                                    if (InstantWriteMap.ContainsKey(domain) && InstantWriteMap[domain].ContainsKey(domainAddress))
+                                                                    {
+                                                                        newByte = InstantWriteMap[domain][domainAddress];
+
+                                                                        if (eventBits != null && eventBits.Length > 0)
+                                                                        {
+                                                                            byte oldByte = domain!.PeekByte(domainAddress);
+                                                                            Console.WriteLine($"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
+
+                                                                            var inputBits = new BitArray(newByte);
+                                                                            var outputBits = new BitArray(oldByte);
+
+                                                                            foreach (var x in eventBits)
+                                                                            {
+                                                                                outputBits[x] = inputBits[x];
+                                                                            }
+                                                                            byte[] newByteContainer = new byte[1];
+                                                                            outputBits.CopyTo(newByteContainer, 0);
+                                                                            newByte = newByteContainer[0];
+                                                                        }
+                                                                        Console.WriteLine($"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -551,7 +413,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                     return;
                                                 }
                                             ),
-                                            Convert.ToUInt32(address),
+                                            Convert.ToUInt32(domainAddress),
                                             null));
                 }
             }
@@ -580,6 +442,85 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         GameHookEvents_eventsSemaphore.Release();
     }
 
+    private void WriteData()
+    {
+        if (Platform == null)
+        {
+            return;
+        }
+
+        GameHookWriteCall_Semaphore.WaitOne();
+
+        InstantWriteMap.Clear();
+
+        // read in the current queue state.
+        GameHookWriteCall_Accessor!.Read(0, out int front);
+
+        if (front != -1)
+        {
+            GameHookWriteCall_Accessor!.Read(sizeof(int), out int rear);
+
+            if (rear != -1)
+            {
+                WriteCall[] writeCalls = new WriteCall[SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE];
+                GameHookWriteCall_Accessor!.ReadArray(sizeof(int) * 2, writeCalls, 0, SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE);
+
+                bool changed = false;
+                // create the queue and enqueue the write
+                CircularArrayQueue<WriteCall> queue = new(writeCalls, front, rear);
+                WriteCall? data;
+                while ((data = queue.Dequeue()) != null)
+                {
+                    //MemoryDomains.First().PokeByte();
+                    if (data.Value.Active)
+                    {
+                        changed = true;
+                        UInt32 address = Convert.ToUInt32(data.Value.Address);
+                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = Platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                        MemoryDomain domain = MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress");
+                        address -= Convert.ToUInt32(platformMemoryLayoutEntry.PhysicalStartingAddress);
+
+                        if(data.Value.Frozen)
+                        {
+                            if(!InstantWriteMap.ContainsKey(domain))
+                            {
+                                InstantWriteMap.Add(domain, new());
+                            }
+                        }
+
+                        byte[] bytes = data.Value.GetBytes();
+                        for (int i = 0; i < bytes.Length; i++)
+                        {
+                            domain.PokeByte(address + i, bytes[i]);
+                            if (data.Value.Frozen)
+                            {
+                                if (!InstantWriteMap[domain].ContainsKey(address + i))
+                                {
+                                    InstantWriteMap[domain].Add(address + i, bytes[i]);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        throw new Exception("unexpected inactive write message");
+                    }
+                }
+
+                if (changed)
+                {
+                    // write the queue back.
+                    writeCalls = queue.Array;
+                    GameHookWriteCall_Accessor!.Write(0, queue.Front);
+                    GameHookWriteCall_Accessor!.Write(sizeof(int), queue.Rear);
+                    GameHookWriteCall_Accessor!.WriteArray(sizeof(int) * 2, writeCalls, 0, SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE);
+                }
+            }
+        }
+
+        GameHookWriteCall_Semaphore.Release();
+    }
+
     public override void Restart()
     {
         if (MemoryDomains == null)
@@ -592,7 +533,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         {
             foreach(var i in Debuggable.MemoryCallbacks.AvailableScopes)
             {
-                Console.Out.WriteLine($"scope: {i.ToString()}");
+                Console.Out.WriteLine($"scope: {i}");
             }
         }
         foreach(var i in MemoryDomains)
@@ -653,14 +594,8 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
             if (mapper != null)
             {
-                if (mapper.InitState != null)
-                {
-                    mapper.InitState(mapper, Platform);
-                }
-                if (mapper.InitMapperDetection != null)
-                {
-                    mapper.InitMapperDetection();
-                }
+                mapper.InitState?.Invoke(mapper, Platform);
+                mapper.InitMapperDetection?.Invoke();
             }
         }
 
@@ -692,16 +627,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 {
                     if (dict.ContainsKey("Power"))
                     {
-                        object hardReset;
-                        bool got = dict.TryGetValue("Power", out hardReset);
-                        if (got && hardReset is bool)
+                        bool got = dict.TryGetValue("Power", out object hardReset);
+                        if (got && hardReset is bool v)
                         {
-                            if ((bool)hardReset)
+                            if (v)
                             {
-                                if (HardReset != null)
-                                {
-                                    HardReset();
-                                }
+                                HardReset?.Invoke();
                                 breakLoop = true;
                             }
                         }
@@ -709,16 +640,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
                     if (dict.ContainsKey("Reset"))
                     {
-                        object softReset;
-                        bool got = dict.TryGetValue("Reset", out softReset);
-                        if (got && softReset is bool)
+                        bool got = dict.TryGetValue("Reset", out object softReset);
+                        if (got && softReset is bool v)
                         {
-                            if ((bool)softReset)
+                            if (v)
                             {
-                                if(SoftReset != null)
-                                {
-                                    SoftReset();
-                                }
+                                SoftReset?.Invoke();
                                 breakLoop = true;
                             }
                         }
@@ -746,6 +673,8 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             {
                 SyncEvents();
             }
+
+            WriteData();
 
             foreach (var entry in Platform.MemoryLayout)
             {
@@ -777,46 +706,6 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             MainLabel.Text = $"Error: {ex.Message}";
         }
     }
-
-    public EventType MemoryCallbackTypeToEventType(MemoryCallbackType memoryCallbackType)
-    {
-        if(memoryCallbackType == MemoryCallbackType.Read)
-        {
-            return EventType.EventType_Read;
-        }
-        else if (memoryCallbackType == MemoryCallbackType.Write)
-        {
-            return EventType.EventType_Write;
-        }
-        else if (memoryCallbackType == MemoryCallbackType.Execute)
-        {
-            return EventType.EventType_Execute;
-        }
-        else
-        {
-            return EventType.EventType_Undefined;
-        }
-    }
-
-    public MemoryCallbackType EventTypeToMemoryCallbackType(EventType eventType)
-    {
-        if (eventType == EventType.EventType_Read)
-        {
-            return MemoryCallbackType.Read;
-        }
-        else if (eventType == EventType.EventType_Write)
-        {
-            return MemoryCallbackType.Write;
-        }
-        else if (eventType == EventType.EventType_Execute)
-        {
-            return MemoryCallbackType.Execute;
-        }
-        else
-        {
-            throw new ArgumentOutOfRangeException();
-        }
-    }
 }
 
 #region PlatformConstants
@@ -835,117 +724,28 @@ public static class SharedPlatformConstants
             string mapperName = "UNKNOWN";
             if (debuggable != null)
             {
-                switch (boardName?.Trim('\0'))
+                mapperName = (boardName?.Trim('\0')) switch
                 {
-                    case "none":
-                    case "NULL":
-                    case "NROM":
-                    case "Plain ROM":
-                    case "NULL [RAM]":
-                    case "Plain ROM+RAM":
-                    case "NULL [RAM,battery]":
-                    case "Plain ROM+RAM+BATTERY":
-                    case "MBC0":
-                        mapperName = "No Mapper";
-                        break;
-                    case "MBC1":
-                    case "MBC1 ROM":
-                    case "MBC1 [RAM]":
-                    case "MBC1 ROM+RAM":
-                    case "MBC1 [RAM,battery]":
-                    case "MBC1 ROM+RAM+BATTERY":
-                        mapperName = "MBC1";
-                        break;
-                    case "MBC1M":
-                    case "MBC1M [RAM]":
-                    case "MBC1M [RAM,battery]":
-                        mapperName = "MBC1M";
-                        break;
-                    case "MBC2":
-                    case "MBC2 ROM":
-                    case "MBC2 [battery]":
-                    case "MBC2 ROM+BATTERY":
-                        mapperName = "MBC2";
-                        break;
-                    case "MBC3":
-                    case "MBC3 ROM":
-                    case "MBC3 [RTC,battery]":
-                    case "MBC3 ROM+TIMER+BATTERY":
-                    case "MBC3 [RAM,RTC,battery]":
-                    case "MBC3 ROM+TIMER+RAM+BATTERY":
-                    case "MBC3 [RAM]":
-                    case "MBC3 ROM+RAM":
-                    case "MBC3 [RAM,battery]":
-                    case "MBC3 ROM+RAM+BATTERY":
-                        mapperName = "MBC3";
-                        break;
-                    case "MBC4":
-                    case "MBC4 [RAM]":
-                    case "MBC4 [RAM,battery]":
-                        mapperName = "MBC4";
-                        break;
-                    case "MBC5":
-                    case "MBC5 ROM":
-                    case "MBC5 [RAM]":
-                    case "MBC5 ROM+RAM":
-                    case "MBC5 [RAM,battery]":
-                    case "MBC5 ROM+RAM+BATTERY":
-                    case "MBC5 [rumble]":
-                    case "MBC5 ROM+RUMBLE":
-                    case "MBC5 [RAM,rumble]":
-                    case "MBC5 ROM+RUMBLE+RAM":
-                    case "MBC5 [RAM,rumble,battery]":
-                    case "MBC5 ROM+RUMBLE+RAM+BATTERY":
-                        mapperName = "MBC5";
-                        break;
-                    case "MBC6":
-                        mapperName = "MBC6";
-                        break;
-                    case "MBC7":
-                    case "MBC7 ROM+ACCEL+EEPROM":
-                        mapperName = "MBC7";
-                        break;
-                    case "MMM01":
-                    case "MMM01 [RAM]":
-                    case "MMM01 [RAM,battery]":
-                        mapperName = "MMM01";
-                        break;
-                    case "M161":
-                        mapperName = "M161";
-                        break;
-                    case "Wisdom Tree":
-                    case "Wtree":
-                        mapperName = "Wisdom Tree";
-                        break;
-                    case "Pocket Camera":
-                    case "Pocket Camera ROM+RAM+BATTERY":
-                    case "CAM":
-                    case "CAMERA":
-                        mapperName = "Pocket Camera";
-                        break;
-                    case "Bandai TAMA5":
-                    case "TAMA5":
-                    case "TAMA":
-                        mapperName = "Bandai TAMA5";
-                        break;
-                    case "HuC3":
-                    case "HuC3 ROM+RAM+BATTERY":
-                        mapperName = "HuC3";
-                        break;
-                    case "HuC1":
-                    case "HuC1 [RAM,battery]":
-                    case "HuC1 ROM+RAM+BATTERY":
-                        mapperName = "HuC1";
-                        break;
-                    case "Schn1":
-                        mapperName = "Schn1";
-                        break;
-                    case "Schn2":
-                        mapperName = "Schn2";
-                        break;
-                    default:
-                        throw new Exception($"NYI \"{boardName?.Trim('\0')}\"");
-                }
+                    "none" or "NULL" or "NROM" or "Plain ROM" or "NULL [RAM]" or "Plain ROM+RAM" or "NULL [RAM,battery]" or "Plain ROM+RAM+BATTERY" or "MBC0" => "No Mapper",
+                    "MBC1" or "MBC1 ROM" or "MBC1 [RAM]" or "MBC1 ROM+RAM" or "MBC1 [RAM,battery]" or "MBC1 ROM+RAM+BATTERY" => "MBC1",
+                    "MBC1M" or "MBC1M [RAM]" or "MBC1M [RAM,battery]" => "MBC1M",
+                    "MBC2" or "MBC2 ROM" or "MBC2 [battery]" or "MBC2 ROM+BATTERY" => "MBC2",
+                    "MBC3" or "MBC3 ROM" or "MBC3 [RTC,battery]" or "MBC3 ROM+TIMER+BATTERY" or "MBC3 [RAM,RTC,battery]" or "MBC3 ROM+TIMER+RAM+BATTERY" or "MBC3 [RAM]" or "MBC3 ROM+RAM" or "MBC3 [RAM,battery]" or "MBC3 ROM+RAM+BATTERY" => "MBC3",
+                    "MBC4" or "MBC4 [RAM]" or "MBC4 [RAM,battery]" => "MBC4",
+                    "MBC5" or "MBC5 ROM" or "MBC5 [RAM]" or "MBC5 ROM+RAM" or "MBC5 [RAM,battery]" or "MBC5 ROM+RAM+BATTERY" or "MBC5 [rumble]" or "MBC5 ROM+RUMBLE" or "MBC5 [RAM,rumble]" or "MBC5 ROM+RUMBLE+RAM" or "MBC5 [RAM,rumble,battery]" or "MBC5 ROM+RUMBLE+RAM+BATTERY" => "MBC5",
+                    "MBC6" => "MBC6",
+                    "MBC7" or "MBC7 ROM+ACCEL+EEPROM" => "MBC7",
+                    "MMM01" or "MMM01 [RAM]" or "MMM01 [RAM,battery]" => "MMM01",
+                    "M161" => "M161",
+                    "Wisdom Tree" or "Wtree" => "Wisdom Tree",
+                    "Pocket Camera" or "Pocket Camera ROM+RAM+BATTERY" or "CAM" or "CAMERA" => "Pocket Camera",
+                    "Bandai TAMA5" or "TAMA5" or "TAMA" => "Bandai TAMA5",
+                    "HuC3" or "HuC3 ROM+RAM+BATTERY" => "HuC3",
+                    "HuC1" or "HuC1 [RAM,battery]" or "HuC1 ROM+RAM+BATTERY" => "HuC1",
+                    "Schn1" => "Schn1",
+                    "Schn2" => "Schn2",
+                    _ => throw new Exception($"NYI \"{boardName?.Trim('\0')}\""),
+                };
                 return new PlatformMapper
                 {
                     GetMapperName = () => { return mapperName; },
@@ -954,11 +754,7 @@ public static class SharedPlatformConstants
                     },
                     GetBankFunctionAndCallbackDomain = (address) =>
                     {
-                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                        if(platformMemoryLayoutEntry == null)
-                        {
-                            throw new Exception("unsupported address");
-                        }
+                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                         GetMapperBankDelegate? bankDelegate = null;
                         switch(platformMemoryLayoutEntry.BizhawkIdentifier)
                         {
@@ -1007,117 +803,28 @@ public static class SharedPlatformConstants
             string mapperName = "UNKNOWN";
             if (debuggable != null)
             {
-                switch (boardName?.Trim('\0'))
+                mapperName = (boardName?.Trim('\0')) switch
                 {
-                    case "none":
-                    case "NULL":
-                    case "NROM":
-                    case "Plain ROM":
-                    case "NULL [RAM]":
-                    case "Plain ROM+RAM":
-                    case "NULL [RAM,battery]":
-                    case "Plain ROM+RAM+BATTERY":
-                    case "MBC0":
-                        mapperName = "No Mapper";
-                        break;
-                    case "MBC1":
-                    case "MBC1 ROM":
-                    case "MBC1 [RAM]":
-                    case "MBC1 ROM+RAM":
-                    case "MBC1 [RAM,battery]":
-                    case "MBC1 ROM+RAM+BATTERY":
-                        mapperName = "MBC1";
-                        break;
-                    case "MBC1M":
-                    case "MBC1M [RAM]":
-                    case "MBC1M [RAM,battery]":
-                        mapperName = "MBC1M";
-                        break;
-                    case "MBC2":
-                    case "MBC2 ROM":
-                    case "MBC2 [battery]":
-                    case "MBC2 ROM+BATTERY":
-                        mapperName = "MBC2";
-                        break;
-                    case "MBC3":
-                    case "MBC3 ROM":
-                    case "MBC3 [RTC,battery]":
-                    case "MBC3 ROM+TIMER+BATTERY":
-                    case "MBC3 [RAM,RTC,battery]":
-                    case "MBC3 ROM+TIMER+RAM+BATTERY":
-                    case "MBC3 [RAM]":
-                    case "MBC3 ROM+RAM":
-                    case "MBC3 [RAM,battery]":
-                    case "MBC3 ROM+RAM+BATTERY":
-                        mapperName = "MBC3";
-                        break;
-                    case "MBC4":
-                    case "MBC4 [RAM]":
-                    case "MBC4 [RAM,battery]":
-                        mapperName = "MBC4";
-                        break;
-                    case "MBC5":
-                    case "MBC5 ROM":
-                    case "MBC5 [RAM]":
-                    case "MBC5 ROM+RAM":
-                    case "MBC5 [RAM,battery]":
-                    case "MBC5 ROM+RAM+BATTERY":
-                    case "MBC5 [rumble]":
-                    case "MBC5 ROM+RUMBLE":
-                    case "MBC5 [RAM,rumble]":
-                    case "MBC5 ROM+RUMBLE+RAM":
-                    case "MBC5 [RAM,rumble,battery]":
-                    case "MBC5 ROM+RUMBLE+RAM+BATTERY":
-                        mapperName = "MBC5";
-                        break;
-                    case "MBC6":
-                        mapperName = "MBC6";
-                        break;
-                    case "MBC7":
-                    case "MBC7 ROM+ACCEL+EEPROM":
-                        mapperName = "MBC7";
-                        break;
-                    case "MMM01":
-                    case "MMM01 [RAM]":
-                    case "MMM01 [RAM,battery]":
-                        mapperName = "MMM01";
-                        break;
-                    case "M161":
-                        mapperName = "M161";
-                        break;
-                    case "Wisdom Tree":
-                    case "Wtree":
-                        mapperName = "Wisdom Tree";
-                        break;
-                    case "Pocket Camera":
-                    case "Pocket Camera ROM+RAM+BATTERY":
-                    case "CAM":
-                    case "CAMERA":
-                        mapperName = "Pocket Camera";
-                        break;
-                    case "Bandai TAMA5":
-                    case "TAMA5":
-                    case "TAMA":
-                        mapperName = "Bandai TAMA5";
-                        break;
-                    case "HuC3":
-                    case "HuC3 ROM+RAM+BATTERY":
-                        mapperName = "HuC3";
-                        break;
-                    case "HuC1":
-                    case "HuC1 [RAM,battery]":
-                    case "HuC1 ROM+RAM+BATTERY":
-                        mapperName = "HuC1";
-                        break;
-                    case "Schn1":
-                        mapperName = "Schn1";
-                        break;
-                    case "Schn2":
-                        mapperName = "Schn2";
-                        break;
-                    default:
-                        throw new Exception($"NYI \"{boardName?.Trim('\0')}\"");
-                }
+                    "none" or "NULL" or "NROM" or "Plain ROM" or "NULL [RAM]" or "Plain ROM+RAM" or "NULL [RAM,battery]" or "Plain ROM+RAM+BATTERY" or "MBC0" => "No Mapper",
+                    "MBC1" or "MBC1 ROM" or "MBC1 [RAM]" or "MBC1 ROM+RAM" or "MBC1 [RAM,battery]" or "MBC1 ROM+RAM+BATTERY" => "MBC1",
+                    "MBC1M" or "MBC1M [RAM]" or "MBC1M [RAM,battery]" => "MBC1M",
+                    "MBC2" or "MBC2 ROM" or "MBC2 [battery]" or "MBC2 ROM+BATTERY" => "MBC2",
+                    "MBC3" or "MBC3 ROM" or "MBC3 [RTC,battery]" or "MBC3 ROM+TIMER+BATTERY" or "MBC3 [RAM,RTC,battery]" or "MBC3 ROM+TIMER+RAM+BATTERY" or "MBC3 [RAM]" or "MBC3 ROM+RAM" or "MBC3 [RAM,battery]" or "MBC3 ROM+RAM+BATTERY" => "MBC3",
+                    "MBC4" or "MBC4 [RAM]" or "MBC4 [RAM,battery]" => "MBC4",
+                    "MBC5" or "MBC5 ROM" or "MBC5 [RAM]" or "MBC5 ROM+RAM" or "MBC5 [RAM,battery]" or "MBC5 ROM+RAM+BATTERY" or "MBC5 [rumble]" or "MBC5 ROM+RUMBLE" or "MBC5 [RAM,rumble]" or "MBC5 ROM+RUMBLE+RAM" or "MBC5 [RAM,rumble,battery]" or "MBC5 ROM+RUMBLE+RAM+BATTERY" => "MBC5",
+                    "MBC6" => "MBC6",
+                    "MBC7" or "MBC7 ROM+ACCEL+EEPROM" => "MBC7",
+                    "MMM01" or "MMM01 [RAM]" or "MMM01 [RAM,battery]" => "MMM01",
+                    "M161" => "M161",
+                    "Wisdom Tree" or "Wtree" => "Wisdom Tree",
+                    "Pocket Camera" or "Pocket Camera ROM+RAM+BATTERY" or "CAM" or "CAMERA" => "Pocket Camera",
+                    "Bandai TAMA5" or "TAMA5" or "TAMA" => "Bandai TAMA5",
+                    "HuC3" or "HuC3 ROM+RAM+BATTERY" => "HuC3",
+                    "HuC1" or "HuC1 [RAM,battery]" or "HuC1 ROM+RAM+BATTERY" => "HuC1",
+                    "Schn1" => "Schn1",
+                    "Schn2" => "Schn2",
+                    _ => throw new Exception($"NYI \"{boardName?.Trim('\0')}\""),
+                };
                 return new PlatformMapper
                 {
                     GetMapperName = () => { return mapperName; },
@@ -1126,11 +833,7 @@ public static class SharedPlatformConstants
                     },
                     GetBankFunctionAndCallbackDomain = (address) =>
                     {
-                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                        if (platformMemoryLayoutEntry == null)
-                        {
-                            throw new Exception("unsupported address");
-                        }
+                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                         GetMapperBankDelegate? bankDelegate = null;
                         switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                         {
@@ -1166,9 +869,9 @@ public static class SharedPlatformConstants
                 throw new Exception("NYI");
             }
         }
-        else if (emulator != null && emulator is GBHawk)
+        else if (emulator != null && emulator is GBHawk hawk)
         {
-            var mapper = ((GBHawk)emulator).mapper;
+            var mapper = hawk.mapper;
             if (mapper != null)
             {
                 switch (mapper)
@@ -1188,11 +891,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1231,11 +930,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1274,11 +969,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1317,11 +1008,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1360,11 +1047,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1403,11 +1086,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1446,11 +1125,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1489,11 +1164,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1532,11 +1203,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1576,11 +1243,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1693,11 +1356,7 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
                                 switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                                 {
@@ -1734,21 +1393,17 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
-                                switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
                                 {
-                                    case "ROM":
-                                        bankDelegate = () => { return mapperWT.ROM_bank; };
-                                        break;
-                                    default:
-                                        bankDelegate = () => { return 0; };
-                                        break;
-                                }
+                                    "ROM" => () => { return mapperWT.ROM_bank; }
+
+                                    ,
+                                    _ => () => { return 0; }
+
+                                    ,
+                                };
                                 return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                             }
                         };
@@ -1764,18 +1419,14 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
-                                switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
                                 {
-                                    default:
-                                        bankDelegate = () => { return 0; };
-                                        break;
-                                }
+                                    _ => () => { return 0; }
+
+                                    ,
+                                };
                                 return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                             }
                         };
@@ -1791,18 +1442,14 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
-                                switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
                                 {
-                                    default:
-                                        bankDelegate = () => { return 0; };
-                                        break;
-                                }
+                                    _ => () => { return 0; }
+
+                                    ,
+                                };
                                 return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                             }
                         };
@@ -1818,18 +1465,14 @@ public static class SharedPlatformConstants
                             },
                             GetBankFunctionAndCallbackDomain = (address) =>
                             {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                                if (platformMemoryLayoutEntry == null)
-                                {
-                                    throw new Exception("unsupported address");
-                                }
+                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                                 GetMapperBankDelegate? bankDelegate = null;
-                                switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
                                 {
-                                    default:
-                                        bankDelegate = () => { return 0; };
-                                        break;
-                                }
+                                    _ => () => { return 0; }
+
+                                    ,
+                                };
                                 return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                             }
                         };
@@ -1842,7 +1485,7 @@ public static class SharedPlatformConstants
                 throw new Exception("unknown mapper.");
             }
         }
-        else if (emulator != null && emulator is LibsnesCore && memoryDomains != null && memoryDomains.Count() > 0)
+        else if (emulator != null && emulator is LibsnesCore core && memoryDomains != null && memoryDomains.Count() > 0)
         {
             return new PlatformMapper
             {
@@ -1850,7 +1493,7 @@ public static class SharedPlatformConstants
                     thisObj.Platform = platform;
                 },
                 GetMapperName = () => {
-                    return ((LibsnesCore)emulator).Api.GameboyMapper.ToString();
+                    return core.Api.GameboyMapper.ToString();
                 },
                 InitMapperDetection = () =>
                 {
@@ -1859,11 +1502,7 @@ public static class SharedPlatformConstants
                 {
                     LibsnesCore snes = (LibsnesCore)debuggable;
 
-                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                    if (platformMemoryLayoutEntry == null)
-                    {
-                        throw new Exception("unsupported address");
-                    }
+                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                     GetMapperBankDelegate? bankDelegate = null;
                     switch (platformMemoryLayoutEntry.BizhawkIdentifier)
                     {
@@ -1906,7 +1545,7 @@ public static class SharedPlatformConstants
     public class PlatformMapper
     {
         public PlatformEntry? Platform { get; set; }
-        public Dictionary<string, object> state = new Dictionary<string, object>();
+        public Dictionary<string, object> state = new();
         public delegate void InitStateDelegate(PlatformMapper thisObj, PlatformEntry? Platform);
         public InitStateDelegate? InitState = null;
         public delegate string GetMapperNameDelegate();
@@ -1957,17 +1596,16 @@ public static class SharedPlatformConstants
     public const int BIZHAWK_MAX_DATA_EVENTS = 256 * 2;
     public const int BIZHAWK_MAX_EXECUTION_EVENTS_SIZE = 256;
     public const int BIZHAWK_MAX_EVENTS_SIZE = BIZHAWK_MAX_DATA_EVENTS + BIZHAWK_MAX_EXECUTION_EVENTS_SIZE;
+    public const int BIZHAWK_MAX_WRITE_CALLS_SIZE = 256 * 2;
 
     public static readonly IEnumerable<PlatformEntry> Information = new List<PlatformEntry>()
     {
-        new PlatformEntry
-        {
+        new() {
             IsBigEndian = true,
             BizhawkIdentifier = "NES",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry
-                {
+                new() {
                     BizhawkIdentifier = "RAM",
                     BizhawkAlternateIdentifier = "RAM",
                     CustomPacketTransmitPosition = 0,
@@ -1980,14 +1618,12 @@ public static class SharedPlatformConstants
                 throw new Exception("NYI");
             }
         },
-        new PlatformEntry
-        {
+        new() {
             IsBigEndian = false,
             BizhawkIdentifier = "SNES",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry
-                {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     BizhawkAlternateIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0,
@@ -2010,13 +1646,13 @@ public static class SharedPlatformConstants
                 };
             }
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "GB",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "ROM",
                     BizhawkAlternateIdentifier = "ROM",
                     CustomPacketTransmitPosition = 0,
@@ -2024,7 +1660,7 @@ public static class SharedPlatformConstants
                     Length = 0x7FFF,
                     EventsOnly = true
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "CartRAM",
                     BizhawkAlternateIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
@@ -2032,7 +1668,7 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     BizhawkAlternateIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
@@ -2040,21 +1676,21 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     BizhawkAlternateIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "HRAM",
                     BizhawkAlternateIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "System Bus",
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
@@ -2065,13 +1701,13 @@ public static class SharedPlatformConstants
             },
             GetMapper = GBMapperDelegate
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "GBC",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "ROM",
                     BizhawkAlternateIdentifier = "ROM",
                     CustomPacketTransmitPosition = 0,
@@ -2079,7 +1715,7 @@ public static class SharedPlatformConstants
                     Length = 0x7FFF,
                     EventsOnly = true
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "CartRAM",
                     BizhawkAlternateIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
@@ -2087,7 +1723,7 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "WRAM",
                     BizhawkAlternateIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
@@ -2095,21 +1731,21 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     BizhawkAlternateIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "HRAM",
                     BizhawkAlternateIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "System Bus",
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
@@ -2120,13 +1756,13 @@ public static class SharedPlatformConstants
             },
             GetMapper = GBMapperDelegate
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = false,
             BizhawkIdentifier = "SGB",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "SGB CARTROM",
                     BizhawkAlternateIdentifier = "ROM",
                     CustomPacketTransmitPosition = 0,
@@ -2134,7 +1770,7 @@ public static class SharedPlatformConstants
                     Length = 0x7FFF,
                     EventsOnly = true
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "SGB CARTRAM",
                     BizhawkAlternateIdentifier = "CartRAM",
                     CustomPacketTransmitPosition = 0x0,
@@ -2142,7 +1778,7 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "SGB WRAM",
                     BizhawkAlternateIdentifier = "WRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1,
@@ -2150,21 +1786,21 @@ public static class SharedPlatformConstants
                     Length = 0x1FFF
                     //Length = 0x00400000
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "VRAM",
                     BizhawkAlternateIdentifier = "VRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0x8000,
                     Length = 0x1FFF
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "SGB HRAM",
                     BizhawkAlternateIdentifier = "HRAM",
                     CustomPacketTransmitPosition = 0x1FFF + 1 + 0x1FFFF + 1 + 0x1FFF + 1,
                     PhysicalStartingAddress = 0xFF80,
                     Length = 0x7E
                 },
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "SGB System Bus",
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
@@ -2175,22 +1811,19 @@ public static class SharedPlatformConstants
             },
             GetMapper = GBMapperDelegate
         },
-        new PlatformEntry
-        {
+        new() {
             IsBigEndian = true,
             BizhawkIdentifier = "GBA",
             MemoryLayout = new PlatformMemoryLayoutEntry[]
             {
-                new PlatformMemoryLayoutEntry
-                {
+                new() {
                     BizhawkIdentifier = "EWRAM",
                     BizhawkAlternateIdentifier = "EWRAM",
                     CustomPacketTransmitPosition = 0,
                     PhysicalStartingAddress = 0x02000000,
                     Length = 0x00040000
                 },
-                new PlatformMemoryLayoutEntry
-                {
+                new() {
                     BizhawkIdentifier = "IWRAM",
                     BizhawkAlternateIdentifier = "IWRAM",
                     CustomPacketTransmitPosition = 0x00040000 + 1,
@@ -2213,13 +1846,13 @@ public static class SharedPlatformConstants
                 };
             }
         },
-        new PlatformEntry()
+        new()
         {
             IsBigEndian = true,
             BizhawkIdentifier = "NDS",
             FrameSkipDefault = 15,
             MemoryLayout = new PlatformMemoryLayoutEntry[] {
-                new PlatformMemoryLayoutEntry {
+                new() {
                     BizhawkIdentifier = "Main RAM",
                     BizhawkAlternateIdentifier = "Main RAM",
                     CustomPacketTransmitPosition = 0,

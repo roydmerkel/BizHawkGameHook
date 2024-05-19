@@ -179,7 +179,7 @@ namespace GameHook.Infrastructure.Drivers
         {
             uint RETROARCH_MAX_MEMORY_BLOCK_SIZE = Convert.ToUInt32(_appSettings.RETROARCH_MAX_MEMORY_BLOCK_SIZE);
             // divide the data into blocks.
-            List<Tuple<uint, uint, uint>> toReadBlocks = new List<Tuple<uint, uint, uint>>();
+            List<Tuple<uint, uint, uint>> toReadBlocks = [];
             foreach (var block in blocks)
             {
                 long left = (block.EndingAddress - block.StartingAddress) + 1;
@@ -188,18 +188,18 @@ namespace GameHook.Infrastructure.Drivers
                 while (left > 0)
                 {
                     uint toRead = Math.Min(RETROARCH_MAX_MEMORY_BLOCK_SIZE, Convert.ToUInt32(left));
-                    Tuple<uint, uint, uint> readBlock = new Tuple<uint, uint, uint>(block.StartingAddress, startingAddress, toRead);
+                    Tuple<uint, uint, uint> readBlock = new(block.StartingAddress, startingAddress, toRead);
                     startingAddress += RETROARCH_MAX_MEMORY_BLOCK_SIZE;
                     left -= RETROARCH_MAX_MEMORY_BLOCK_SIZE;
                     toReadBlocks.Add(readBlock);
                 }
             }
             // read the blocks.
-            IList<Tuple<uint, uint, byte[]>> results = new List<Tuple<uint, uint, byte[]>>();
-            IList<Exception> exceptions = new List<Exception>();
+            List<Tuple<uint, uint, byte[]>> results = [];
+            List<Exception> exceptions = [];
             for (var i = 0; i < _appSettings.RETROARCH_READ_RETRY_COUNT + 1 && toReadBlocks.Count > 0; i++)
             {
-                exceptions = new List<Exception>();
+                exceptions = [];
                 if (i > 0)
                     Logger.LogInformation($"Timeout occured, retry: {i}");
                 List<Task<Tuple<uint, uint, byte[]>>> tasks = toReadBlocks.Select(async x =>
@@ -227,7 +227,7 @@ namespace GameHook.Infrastructure.Drivers
                     }
                 }
             }
-            if (toReadBlocks.Count() > 0)
+            if (toReadBlocks.Count > 0)
             {
                 if (exceptions != null && exceptions.Count > 0)
                 {
@@ -240,17 +240,17 @@ namespace GameHook.Infrastructure.Drivers
             }
             // concatinate the blocks back into kv pairs.
             var keys = results.Select(x => x.Item1).Distinct().Order().ToArray();
-            List<KeyValuePair<uint, byte[]>> kvList = new List<KeyValuePair<uint, byte[]>>();
+            List<KeyValuePair<uint, byte[]>> kvList = [];
             foreach (var key in keys)
             {
-                byte[] data = new byte[0];
+                byte[] data = [];
                 var subkeys = results.Where(x => x.Item1 == key).Select(x => x.Item2).Distinct().Order().ToArray();
                 foreach (var subkey in subkeys)
                 {
                     var dataArrays = results.Where(x => x.Item1 == key && x.Item2 == subkey).Select(x => x.Item3);
                     foreach (var val in dataArrays)
                     {
-                        data = data.Concat(val).ToArray();
+                        data = [.. data, .. val];
                     }
                 }
 
@@ -271,14 +271,16 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task AddEvent(long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
+        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
         {
-            throw new Exception("Callback events are unsupported in RetroArch UDP api, at this time.");
+            Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+            return Task.CompletedTask;
         }
 
         public Task RemoveEvent(long address, ushort bank, EventType eventType)
         {
-            throw new Exception("Callback events are unsupported in RetroArch UDP api, at this time.");
+            Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+            return Task.CompletedTask;
         }
     }
 }

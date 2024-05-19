@@ -41,6 +41,9 @@ namespace GameHook.Domain.GameHookProperties
                     Name = attributes.Path + "." + "variableEvent",
                     EventType = EventType.EventType_ReadWrite,
                     Address = attributes.Address,
+                    Bits = attributes.Bits,
+                    Size = attributes.Size,
+                    Length = attributes.Length,
                     Property = this,
                 };
 

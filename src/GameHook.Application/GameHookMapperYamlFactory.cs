@@ -17,26 +17,39 @@ namespace GameHook.Application
 {
     public record YamlRoot
     {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public YamlMeta meta { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public IDictionary<object, object> properties { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public IDictionary<string, IDictionary<object, dynamic>> macros { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public IDictionary<string, IDictionary<string, dynamic>> glossary { get; init; }
     }
 
     public record YamlMeta
     {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public int schemaVersion { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public Guid id { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string gameName { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string gamePlatform { get; init; }
     }
 
     public record MacroEntry
     {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string type { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public int? address { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string macro { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string? reference { get; init; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public int? length { get; init; }
     }
 
@@ -45,7 +58,7 @@ namespace GameHook.Application
         public string? Address { get; set; }
     }
 
-    public static class GameHookMapperYamlFactory
+    public static partial class GameHookMapperYamlFactory
     {
         public static YamlRoot Deserialize(string mapperContents)
         {
@@ -55,8 +68,8 @@ namespace GameHook.Application
             return data;
         }
 
-        private static string[] ConvertYamlToXMLIgnoreAttrs = { "offset", "address", "macro" };
-        private static string[] ConvertYamlToXMLIgnoreMacroParentAttrs = { "type", "class" };
+        private static readonly string[] ConvertYamlToXMLIgnoreAttrs = ["offset", "address", "macro"];
+        private static readonly string[] ConvertYamlToXMLIgnoreMacroParentAttrs = ["type", "class"];
         public static void ConvertYamlToXMLIter(XmlDocument doc, dynamic root, XmlElement xmlRoot, bool inMacros, bool inClass)
         {
             if(root is IDictionary<object, dynamic> || 
@@ -67,11 +80,11 @@ namespace GameHook.Application
                     object key = kv.Key;
                     dynamic value = kv.Value;
 
-                    if(key is not null && key is string keyString && isMerge(keyString))
+                    if(key is not null && key is string keyString && IsMerge(keyString))
                     {
                         if(value is IDictionary<dynamic, dynamic> valueDict)
                         {
-                            if (!isProperty(valueDict, inMacros, inClass))
+                            if (!IsProperty(valueDict, inMacros, inClass))
                             {
                                 throw new Exception("macro isn't a valid property or class");
                             }
@@ -150,7 +163,7 @@ namespace GameHook.Application
                                         XmlAttribute offsetAttr = doc.CreateAttribute("var", "address", "https://schemas.gamehook.io/attributes/var");
                                         offset = "".ParseIntOrHex(offset).ToString();
                                         string addr = "{address} + " + offset;
-                                        addr = Regex.Replace(addr, @"^[{]address[}] \+ (0x)?0+$", "{address}");
+                                        addr = AddressRegex().Replace(addr, "{address}");
                                         offsetAttr.Value = addr;
                                         macroElem.SetAttributeNode(offsetAttr);
                                     }
@@ -171,7 +184,7 @@ namespace GameHook.Application
                             throw new Exception("unexpected type.");
                         }
                     }
-                    else if(isProperty(value, inMacros, inClass))
+                    else if(IsProperty(value, inMacros, inClass))
                     {
                         if (value is IDictionary<dynamic, dynamic> valueDict)
                         {
@@ -190,7 +203,7 @@ namespace GameHook.Application
                                     XmlAttribute offsetAttr = doc.CreateAttribute("address");
                                     offset = "".ParseIntOrHex(offset).ToString();
                                     string addr = "{address} + " + offset;
-                                    addr = Regex.Replace(addr, @"^[{]address[}] \+ (0x)?0+$", "{address}");
+                                    addr = AddressRegex().Replace(addr, "{address}");
                                     offsetAttr.Value = addr;
                                     property.SetAttributeNode(offsetAttr);
                                 }
@@ -296,23 +309,14 @@ namespace GameHook.Application
                                                 {
                                                     KeyValuePair<object, dynamic> nibblePositionKV = nibblePositionKVQ.Value;
                                                     XmlAttribute bitsAttr = doc.CreateAttribute("bits");
-                                                    switch (nibblePositionKV.Value.ToString().ToLower())
+                                                    bitsAttr.Value = nibblePositionKV.Value.ToString().ToLower() switch
                                                     {
-                                                        case "0":
-                                                            bitsAttr.Value = "4-7";
-                                                            break;
-                                                        case "1":
-                                                            bitsAttr.Value = "0-3";
-                                                            break;
-                                                        case "high":
-                                                            bitsAttr.Value = "4-7";
-                                                            break;
-                                                        case "low":
-                                                            bitsAttr.Value = "0-3";
-                                                            break;
-                                                        default:
-                                                            throw new Exception("unsupported position.");
-                                                    }
+                                                        "0" => "4-7",
+                                                        "1" => "0-3",
+                                                        "high" => "4-7",
+                                                        "low" => "0-3",
+                                                        _ => throw new Exception("unsupported position."),
+                                                    };
                                                     xmlRoot.SetAttributeNode(bitsAttr);
                                                 }
                                                 else
@@ -337,11 +341,11 @@ namespace GameHook.Application
             else if(root is IList<dynamic>
                 || root is IList<object>)
             {
-                var rootList = (root is IList<dynamic>) ? (IList<dynamic>)root : (IList<object>)root;
+                var rootList = (root is IList<dynamic> list) ? list : (IList<object>)root;
                 for(int key = 0; key < rootList.Count; key++)
                 {
                     dynamic value = rootList[key];
-                    if(isProperty(value, inMacros, inClass))
+                    if(IsProperty(value, inMacros, inClass))
                     {
                         string name = key.ToString();
 
@@ -407,7 +411,7 @@ namespace GameHook.Application
                                         XmlAttribute offsetAttr = doc.CreateAttribute("var", "address", "https://schemas.gamehook.io/attributes/var");
                                         offset = "".ParseIntOrHex(offset).ToString();
                                         string addr = "{address} + " + offset;
-                                        addr = Regex.Replace(addr, @"^[{]address[}] \+ (0x)?0+$", "{address}");
+                                        addr = AddressRegex().Replace(addr, "{address}");
                                         offsetAttr.Value = addr;
                                         macroElem.SetAttributeNode(offsetAttr);
                                     }
@@ -447,7 +451,7 @@ namespace GameHook.Application
                                     XmlAttribute offsetAttr = doc.CreateAttribute("address");
                                     offset = "".ParseIntOrHex(offset).ToString();
                                     string addr = "{address} + " + offset;
-                                    addr = Regex.Replace(addr, @"^[{]address[}] \+ (0x)?0+$", "{address}");
+                                    addr = AddressRegex().Replace(addr, "{address}");
                                     offsetAttr.Value = addr;
                                     property.SetAttributeNode(offsetAttr);
                                 }
@@ -465,7 +469,7 @@ namespace GameHook.Application
                         }
                         else
                         {
-                            throw new Exception("unexpected type, isProperty should only be true for dictionaries.");
+                            throw new Exception("unexpected type, IsProperty should only be true for dictionaries.");
                         }
                     }
                     else if (value is IDictionary<object, dynamic> valueDict)
@@ -518,7 +522,7 @@ namespace GameHook.Application
             var newnode = oldNode.OwnerDocument.CreateNode(XmlNodeType.Element, newChildName, "");
 
             List<XmlAttribute> attributeList = (oldNode != null && oldNode.Attributes != null) ? oldNode.Attributes.Cast<XmlAttribute>().ToList() : [];
-            List<XmlAttribute> l = new List<XmlAttribute> { };
+            List<XmlAttribute> l = [];
             foreach (XmlAttribute attr in attributeList)
             {
                 newnode.Attributes.Append(attr);
@@ -535,7 +539,7 @@ namespace GameHook.Application
 
         public static XmlDocument ConvertYamlToXML(YamlRoot data)
         {
-            XmlDocument xmlDocument = new XmlDocument();
+            XmlDocument xmlDocument = new();
 
             /* create the mapper root, munging the metadata */
             XmlAttribute xmlns_xsi = xmlDocument.CreateAttribute("xmlns", "xsi", "http://www.w3.org/2000/xmlns/");
@@ -615,8 +619,7 @@ namespace GameHook.Application
                 {
                     if (glossaryItem.Key != "type")
                     {
-                        ulong keyVal = 0;
-                        if(!"".TryParseHex(glossaryItem.Key, out keyVal))
+                        if (!"".TryParseHex(glossaryItem.Key, out ulong keyVal))
                         {
                             throw new Exception("key is not number of hex number.");
                         }
@@ -702,26 +705,26 @@ namespace GameHook.Application
             return GameHookMapperXmlFactory.LoadMapperFromFile(instance, filePath, mapperContents);
         }
 
-        public static bool isProperty(dynamic source, bool insideMacro, bool insideClass)
+        public static bool IsProperty(dynamic source, bool insideMacro, bool insideClass)
         {
-            if (source is IDictionary<object, object>)
+            if (source is IDictionary<object, object> dictionary)
             {
-                return isProperty((IDictionary<object, object>)source, insideMacro, insideClass);
+                return IsProperty(dictionary, insideMacro, insideClass);
             }
             return false;
         }
 
-        public static bool isProperty(IDictionary<object, object> source, bool insideMacro, bool insideClass)
+        public static bool IsProperty(IDictionary<object, object> source, bool insideMacro, bool insideClass)
         {
             return insideMacro == false && source.ContainsKey("type") && (source.ContainsKey("address") || source.ContainsKey("preprocessor") || source.ContainsKey("staticValue"))
                 || (insideMacro == true && source.ContainsKey("type") && source.ContainsKey("offset"))
                 || (insideClass == true && source.ContainsKey("type") && (source.ContainsKey("offset") || source.ContainsKey("address") || source.ContainsKey("preprocessor") || source.ContainsKey("staticValue") || source.ContainsKey("classIdx")));
         }
 
-        public static bool isMerge(string childKey)
+        public static bool IsMerge(string childKey)
         {
             // Key is defined as a special command.
-            if (childKey.StartsWith("_"))
+            if (childKey.StartsWith('_'))
             {
                 var childKeyCharArray = childKey.ToCharArray();
 
@@ -745,11 +748,14 @@ namespace GameHook.Application
         {
             return objValEnum.Select< KeyValuePair<object, object>, KeyValuePair<object, object>?>(property => property)
                 .Where(property => 
-                    property != null && property.Value.Key != null && 
-                    property.Value.Key.ToString() != null && 
-                    property.Value.Key.ToString()!.ToLower() == key)
+                    property != null && property.Value.Key != null &&
+                    property.Value.Key.ToString() != null &&
+                    property.Value.Key.ToString().Equals(key, StringComparison.CurrentCultureIgnoreCase))
                 .DefaultIfEmpty(null)
                 .FirstOrDefault();
         }
+
+        [GeneratedRegex(@"^[{]address[}] \+ (0x)?0+$")]
+        private static partial Regex AddressRegex();
     }
 }
