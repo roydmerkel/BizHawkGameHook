@@ -49,7 +49,7 @@
 
         void ProcessLoop(IMemoryManager container);
         void ClearEvent(MemoryAddress address, ushort bank);
-        void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size);
+        void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size, bool instantaneous);
         void UpdateAddressFromProperty();
     }
 }

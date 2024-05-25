@@ -6,7 +6,7 @@ using GameHook.Utility.BuildMapperBindings;
 var mapperInputDirectoryPath = Path.GetFullPath($"{AppContext.BaseDirectory}../../../../../../mappers");
 var typescriptOutputDirectoryPath = Path.GetFullPath($"{AppContext.BaseDirectory}../../../../../../bindings/src");
 var xmlFilePaths = Directory.GetFiles(mapperInputDirectoryPath, "*.xml", SearchOption.AllDirectories);
-var ymlFilePaths = String.Empty.GetFilesByExtensions(mapperInputDirectoryPath, new string[] { "*.yml", "*.yaml" }, SearchOption.AllDirectories);
+var ymlFilePaths = String.Empty.GetFilesByExtensions(mapperInputDirectoryPath, ["*.yml", "*.yaml"], SearchOption.AllDirectories);
 
 foreach (var xmlFilePath in xmlFilePaths)
 {
@@ -14,7 +14,7 @@ foreach (var xmlFilePath in xmlFilePaths)
     {
         var instance = new GameHookFakeInstance();
         var contents = await File.ReadAllTextAsync(xmlFilePath);
-        var mapper = GameHookMapperXmlFactory.LoadMapperFromFile(instance, xmlFilePath, contents);
+        var mapper = GameHookMapperXmlFactory.LoadMapperFromFile(instance, contents);
 
         // Create child directory if not exists.
         if (mapper.Metadata.GamePlatform.Any(x => char.IsLetter(x) == false && char.IsNumber(x) == false))
@@ -46,7 +46,7 @@ foreach (var ymlFilePath in ymlFilePaths)
     {
         var instance = new GameHookFakeInstance();
         var contents = await File.ReadAllTextAsync(ymlFilePath);
-        var mapper = GameHookMapperYamlFactory.LoadMapperFromFile(instance, ymlFilePath, contents);
+        var mapper = GameHookMapperYamlFactory.LoadMapperFromFile(instance, contents);
 
         // Create child directory if not exists.
         if (mapper.Metadata.GamePlatform.Any(x => char.IsLetter(x) == false && char.IsNumber(x) == false))

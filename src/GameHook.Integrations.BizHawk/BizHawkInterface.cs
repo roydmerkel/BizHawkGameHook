@@ -192,11 +192,12 @@ namespace GameHook.Integrations.BizHawk
             public ulong Name13;
             public ulong Name14;
             public ulong Name15;
+            public bool Instantaneous;
 
-            public EventAddress() : this(null, false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0)
+            public EventAddress() : this(null, false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0, false)
             {
             }
-            public EventAddress(string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size)
+            public EventAddress(string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size, bool instantaneous)
             {
                 Name0 = 0;
                 Name1 = 0;
@@ -230,6 +231,7 @@ namespace GameHook.Integrations.BizHawk
                 Bits7 = 0;
                 Length = length;
                 Size = (size > 0) ? size : 1;
+                Instantaneous = instantaneous;
 
                 if (name == null)
                 {

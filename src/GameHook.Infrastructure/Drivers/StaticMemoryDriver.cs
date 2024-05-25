@@ -73,7 +73,7 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
+        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
         {
             if (BuildEnvironment.IsDebug == false)
             {

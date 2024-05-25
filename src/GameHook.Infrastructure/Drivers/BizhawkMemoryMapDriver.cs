@@ -27,6 +27,26 @@ namespace GameHook.Infrastructure.Drivers
 
         private readonly AppSettings _appSettings;
 
+        private MemoryMappedFile? _metadataMemoryMappedFile = null;
+        private MemoryMappedViewAccessor? _metadataAccessor = null;
+
+        private MemoryMappedFile? _dataMemoryMappedFile = null;
+        private MemoryMappedViewAccessor? _dataAccessor = null;
+
+        private MemoryMappedFile? _eventsLookupMemoryMappedFile = null;
+        private MemoryMappedViewAccessor? _eventsLookupAccessor = null;
+        private int _eventsLookupElementSize = 0;
+        private Semaphore? _eventsSemaphore = null;
+
+        private MemoryMappedFile? _writeCallMemoryMappedFile = null;
+        private MemoryMappedViewAccessor? _writeCallAccessor = null;
+        private int _writeCallElementSize = 0;
+        private Semaphore? _writeCallSemaphore = null;
+
+        const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
+        EventAddress[] eventsLookup = [];
+        Dictionary<long, int[]> addressEventsLookup = new();
+
         public BizhawkMemoryMapDriver(AppSettings appSettings)
         {
             _appSettings = appSettings;
@@ -38,17 +58,82 @@ namespace GameHook.Infrastructure.Drivers
             return Encoding.UTF8.GetString(data).TrimEnd('\0');
         }
 
-        static byte[] GetFromMemoryMappedFile(string filename, int fileSize)
+        public Task EstablishConnection()
         {
+            byte[] metadata = new byte[METADATA_LENGTH];
+
+            if (_metadataAccessor != null)
+            {
+                _metadataAccessor.Dispose();
+                _metadataAccessor = null;
+            }
+
+            if (_metadataMemoryMappedFile != null)
+            {
+                _metadataMemoryMappedFile.Dispose();
+                _metadataMemoryMappedFile = null;
+            }
+
+            if (_dataAccessor != null)
+            {
+                _dataAccessor.Dispose();
+                _dataAccessor = null;
+            }
+
+            if (_dataMemoryMappedFile != null)
+            {
+                _dataMemoryMappedFile.Dispose();
+                _dataMemoryMappedFile = null;
+            }
+
+            if (_eventsSemaphore != null)
+            {
+                _eventsSemaphore.Close();
+                _eventsSemaphore.Dispose();
+                _eventsSemaphore = null;
+            }
+
+            if (_eventsLookupAccessor != null)
+            {
+                _eventsLookupAccessor.Dispose();
+                _eventsLookupAccessor = null;
+            }
+
+            if (_eventsLookupMemoryMappedFile != null)
+            {
+                _eventsLookupMemoryMappedFile.Dispose();
+                _eventsLookupMemoryMappedFile = null;
+            }
+
+            if (_writeCallSemaphore != null)
+            {
+                _writeCallSemaphore.Close();
+                _writeCallSemaphore.Dispose();
+                _writeCallSemaphore = null;
+            }
+
+            if (_writeCallAccessor != null)
+            {
+                _writeCallAccessor.Dispose();
+                _writeCallAccessor = null;
+            }
+
+            if (_writeCallMemoryMappedFile != null)
+            {
+                _writeCallMemoryMappedFile.Dispose();
+                _writeCallMemoryMappedFile = null;
+            }
+
+            eventsLookup = new EventAddress[eventsLookupSize];
+            EventAddress template = new();
+            Array.Fill(eventsLookup, template);
+
             try
             {
-                using var mmfData = MemoryMappedFile.OpenExisting(filename, MemoryMappedFileRights.Read);
-                using var mmfAccessor = mmfData.CreateViewAccessor(0, fileSize, MemoryMappedFileAccess.Read);
+                _metadataMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK.bin", MemoryMappedFileRights.Read);
+                _metadataAccessor = _metadataMemoryMappedFile.CreateViewAccessor(0, METADATA_LENGTH, MemoryMappedFileAccess.Read);
 
-                byte[] data = new byte[fileSize];
-                mmfAccessor.ReadArray(0, data, 0, fileSize);
-
-                return data;
+                _metadataAccessor.ReadArray(0, metadata, 0, METADATA_LENGTH);
             }
             catch (FileNotFoundException ex)
             {
@@ -58,11 +143,6 @@ namespace GameHook.Infrastructure.Drivers
             {
                 throw;
             }
-        }
-
-        public Task EstablishConnection()
-        {
-            var metadata = GetFromMemoryMappedFile("GAMEHOOK_BIZHAWK.bin", METADATA_LENGTH);
 
             IntegrationVersion = metadata[1];
 
@@ -78,6 +158,56 @@ namespace GameHook.Infrastructure.Drivers
                 throw new VisibleException("BizHawk connection is established, but does not have a game running.");
             }
 
+            try
+            {
+                _dataMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_DATA.bin", MemoryMappedFileRights.Read);
+                _dataAccessor = _dataMemoryMappedFile.CreateViewAccessor(0, DATA_Length, MemoryMappedFileAccess.Read);
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+
+            try
+            {
+                int eventElementSize = Marshal.SizeOf(typeof(EventAddress));
+                _eventsLookupElementSize = 1 + eventElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
+                _eventsLookupMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", MemoryMappedFileRights.Write);
+                _eventsLookupAccessor = _eventsLookupMemoryMappedFile.CreateViewAccessor(0, _eventsLookupElementSize, MemoryMappedFileAccess.Write);
+
+                _eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+
+            try
+            {
+                int writeCallEventElementSize = Marshal.SizeOf(typeof(WriteCall));
+                _writeCallElementSize = sizeof(int) + sizeof(int) + writeCallEventElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE; // front, rear, array.
+                _writeCallMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", MemoryMappedFileRights.ReadWrite);
+                _writeCallAccessor = _writeCallMemoryMappedFile.CreateViewAccessor(0, _writeCallElementSize, MemoryMappedFileAccess.ReadWrite);
+
+                _writeCallSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -85,7 +215,19 @@ namespace GameHook.Infrastructure.Drivers
         {
             var platform = SharedPlatformConstants.Information.SingleOrDefault(x => x.BizhawkIdentifier == SystemName) ?? throw new Exception($"System {SystemName} is not yet supported.");
 
-            var data = GetFromMemoryMappedFile("GAMEHOOK_BIZHAWK_DATA.bin", DATA_Length);
+            byte[] data = new byte[DATA_Length];
+            try
+            {
+                _dataAccessor!.ReadArray(0, data, 0, DATA_Length);
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
 
             return Task.FromResult(platform.MemoryLayout.ToDictionary(
                 x => x.PhysicalStartingAddress,
@@ -97,52 +239,47 @@ namespace GameHook.Infrastructure.Drivers
         {
             try
             {
-                using (Semaphore writeCallsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore"))
-                //using (Semaphore eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore"))
+                _writeCallSemaphore!.WaitOne();
+
+                try
                 {
-                    writeCallsSemaphore.WaitOne();
+                    const int writeCallsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE;
+                    WriteCall[] writeCalls = new WriteCall[writeCallsLookupSize];
 
-                    try
-                    {
-                        int writeCallElementSize = Marshal.SizeOf(typeof(WriteCall));
-                        long writeCallMemoryMappedSize = sizeof(int) + sizeof(int) + writeCallElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE;
-                        const int writeCallsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE;
-                        WriteCall[] writeCalls = new WriteCall[writeCallsLookupSize];
-                        using var mmfWriteData = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", MemoryMappedFileRights.ReadWrite);
-                        using var mmfWriteAccessor = mmfWriteData.CreateViewAccessor(0, writeCallMemoryMappedSize, MemoryMappedFileAccess.ReadWrite);
+                    // read in the current queue state.
+                    _writeCallAccessor!.Read(0, out int front);
+                    _writeCallAccessor.Read(sizeof(int), out int rear);
+                    _writeCallAccessor.ReadArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
 
-                        // read in the current queue state.
-                        mmfWriteAccessor.Read(0, out int front);
-                        mmfWriteAccessor.Read(sizeof(int), out int rear);
-                        mmfWriteAccessor.ReadArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
+                    int[] eventIdx = (addressEventsLookup != null) ? (addressEventsLookup.ContainsKey(startingMemoryAddress) ? addressEventsLookup[startingMemoryAddress] : []) : [];
+                    bool frozen = eventIdx.Any(x => eventsLookup[x].Instantaneous);
 
-                        // create the queue and enqueue the write
-                        CircularArrayQueue<WriteCall> queue = new(writeCalls, front, rear);
-                        WriteCall writeCall = new(true, false, startingMemoryAddress, values);
-                        if (!queue.Enqueue(writeCall))
-                        {
-                            throw new Exception("write data queue full, too many write events sent too closely together.");
-                        }
+                    // create the queue and enqueue the write
+                    CircularArrayQueue <WriteCall> queue = new(writeCalls, front, rear);
+                    WriteCall writeCall = new(true, frozen, startingMemoryAddress, values);
+                    if (!queue.Enqueue(writeCall))
+                    {
+                        throw new Exception("write data queue full, too many write events sent too closely together.");
+                    }
 
-                        // write the data back.
-                        mmfWriteAccessor.Write(0, queue.Front);
-                        mmfWriteAccessor.Write(sizeof(int), queue.Rear);
-                        writeCalls = queue.Array;
-                        mmfWriteAccessor.WriteArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
-                    }
-                    catch (FileNotFoundException ex)
-                    {
-                        throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-                    finally
-                    {
-                        //eventsSemaphore.Release();
-                        writeCallsSemaphore.Release();
-                    }
+                    // write the data back.
+                    _writeCallAccessor.Write(0, queue.Front);
+                    _writeCallAccessor.Write(sizeof(int), queue.Rear);
+                    writeCalls = queue.Array;
+                    _writeCallAccessor.WriteArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
+                }
+                catch (FileNotFoundException ex)
+                {
+                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+                }
+                catch
+                {
+                    throw;
+                }
+                finally
+                {
+                    //eventsSemaphore.Release();
+                    _writeCallSemaphore.Release();
                 }
 
                 return Task.CompletedTask;
@@ -161,35 +298,27 @@ namespace GameHook.Infrastructure.Drivers
         {
             try
             {
-                using (Semaphore eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore"))
-                {
-                    eventsSemaphore.WaitOne();
+                _eventsSemaphore!.WaitOne();
 
-                    try
-                    {
-                        int eventElementSize = Marshal.SizeOf(typeof(EventAddress));
-                        long memoryMappedSize = 1 + eventElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        EventAddress[] resetEventsLookup = new EventAddress[eventsLookupSize];
-                        using var mmfData = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", MemoryMappedFileRights.Write);
-                        using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.Write);
-                        EventAddress template = new();
-                        Array.Fill(resetEventsLookup, template, 0, resetEventsLookup.Length);
-                        mmfAccessor.Write(0, (byte)1);
-                        mmfAccessor.WriteArray(1, resetEventsLookup, 0, resetEventsLookup.Length);
-                    }
-                    catch (FileNotFoundException ex)
-                    {
-                        throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-                    finally
-                    {
-                        eventsSemaphore.Release();
-                    }
+                try
+                {
+                    EventAddress template = new();
+                    Array.Fill(eventsLookup, template, 0, eventsLookup.Length);
+                    addressEventsLookup = new();
+                    _eventsLookupAccessor!.Write(0, (byte)1);
+                    _eventsLookupAccessor.WriteArray(1, eventsLookup, 0, eventsLookup.Length);
+                }
+                catch (FileNotFoundException ex)
+                {
+                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+                }
+                catch
+                {
+                    throw;
+                }
+                finally
+                {
+                    _eventsSemaphore.Release();
                 }
 
                 return Task.CompletedTask;
@@ -204,48 +333,34 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
+        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
         {
             try
             {
-                using (Semaphore eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore"))
-                {
-                    eventsSemaphore.WaitOne();
+                _eventsSemaphore!.WaitOne();
 
-                    try
+                try
+                {
+                    List<EventAddress> currentEvents = eventsLookup.Where(x => x.Active).ToList();
+                    if(currentEvents.Count >= eventsLookupSize)
                     {
-                        int eventElementSize = Marshal.SizeOf(typeof(EventAddress));
-                        long memoryMappedSize = 1 + eventElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        using var mmfData = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", MemoryMappedFileRights.ReadWrite);
-                        using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
-                        EventAddress[] currentEventsLookup = new EventAddress[eventsLookupSize];
-                        mmfAccessor.ReadArray(1, currentEventsLookup, 0, currentEventsLookup.Length);
-                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active).ToList();
-                        if(currentEvents.Count >= eventsLookupSize)
+                        throw new Exception("Too many events, please contact devs to get more added, or remove some events or instant properties.");
+                    }
+                    else
+                    {
+                        IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides;
+                        if (eventRegisterOverrides != null && eventRegisterOverrides.Length > 0)
                         {
-                            throw new Exception("Too many events, please contact devs to get more added, or remove some events or instant properties.");
-                        }
-                        else
-                        {
-                            IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides;
-                            if (eventRegisterOverrides != null && eventRegisterOverrides.Length > 0)
+                            eventAddressRegisterOverrides = eventRegisterOverrides.Select(x =>
                             {
-                                eventAddressRegisterOverrides = eventRegisterOverrides.Select(x =>
+                                if (x != null)
                                 {
-                                    if (x != null)
+                                    if (x.Value != null && x.Register != null)
                                     {
-                                        if (x.Value != null && x.Register != null)
+                                        string? valueString = x.Value.ToString();
+                                        if (valueString != null)
                                         {
-                                            string? valueString = x.Value.ToString();
-                                            if (valueString != null)
-                                            {
-                                                return new EventAddressRegisterOverride(x.Register, ulong.Parse(valueString));
-                                            }
-                                            else
-                                            {
-                                                throw new NullReferenceException();
-                                            }
+                                            return new EventAddressRegisterOverride(x.Register, ulong.Parse(valueString));
                                         }
                                         else
                                         {
@@ -256,41 +371,50 @@ namespace GameHook.Infrastructure.Drivers
                                     {
                                         throw new NullReferenceException();
                                     }
-                                });
-                            }
-                            else
-                            {
-                                eventAddressRegisterOverrides = new List<EventAddressRegisterOverride>();
-                            }
-
-                            EventAddress newAddress = new(name, true, address, bank, eventType, eventAddressRegisterOverrides.ToArray(), bits, length, size);
-                            currentEvents.Add(newAddress);
-
-                            if(currentEvents.Count < eventsLookupSize)
-                            {
-                                EventAddress template = new();
-
-                                while(currentEvents.Count < eventsLookupSize)
-                                {
-                                    currentEvents.Add(template);
                                 }
+                                else
+                                {
+                                    throw new NullReferenceException();
+                                }
+                            });
+                        }
+                        else
+                        {
+                            eventAddressRegisterOverrides = new List<EventAddressRegisterOverride>();
+                        }
+
+                        EventAddress newAddress = new(name, true, address, bank, eventType, eventAddressRegisterOverrides.ToArray(), bits, length, size, instantaneous);
+                        currentEvents.Add(newAddress);
+
+                        if(currentEvents.Count < eventsLookupSize)
+                        {
+                            EventAddress template = new();
+
+                            while(currentEvents.Count < eventsLookupSize)
+                            {
+                                currentEvents.Add(template);
                             }
                         }
-                        mmfAccessor.Write(0, (byte)1);
-                        mmfAccessor.WriteArray(1, currentEvents.ToArray(), 0, currentEvents.Count);
                     }
-                    catch (FileNotFoundException ex)
-                    {
-                        throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-                    finally
-                    {
-                        eventsSemaphore.Release();
-                    }
+                    currentEvents.CopyTo(eventsLookup, 0);
+
+                    IEnumerable<long> keys = eventsLookup.Where(x => x.Active).DistinctBy(x => x.Address).Select(x => x.Address);
+                    addressEventsLookup = keys.ToDictionary(x => x, x => eventsLookup.Select((y, idx) => new Tuple<int, long, bool>(idx, y.Address, y.Active)).Where(y => y.Item3 && y.Item2 == x).Select(y => y.Item1).ToArray());
+
+                    _eventsLookupAccessor.Write(0, (byte)1);
+                    _eventsLookupAccessor.WriteArray(1, eventsLookup, 0, eventsLookup.Length);
+                }
+                catch (FileNotFoundException ex)
+                {
+                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+                }
+                catch
+                {
+                    throw;
+                }
+                finally
+                {
+                    _eventsSemaphore.Release();
                 }
 
                 return Task.CompletedTask;
@@ -309,46 +433,40 @@ namespace GameHook.Infrastructure.Drivers
         {
             try
             {
-                using (Semaphore eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore"))
+                _eventsSemaphore!.WaitOne();
+
+                try
                 {
-                    eventsSemaphore.WaitOne();
+                    List<EventAddress> currentEvents = eventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType || x.Bank != bank)).ToList();
 
-                    try
+                    if (currentEvents.Count < eventsLookupSize)
                     {
-                        int eventElementSize = Marshal.SizeOf(typeof(EventAddress));
-                        long memoryMappedSize = 1 + eventElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                        using var mmfData = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", MemoryMappedFileRights.ReadWrite);
-                        using var mmfAccessor = mmfData.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
-                        EventAddress[] currentEventsLookup = new EventAddress[eventsLookupSize];
-                        mmfAccessor.ReadArray(1, currentEventsLookup, 0, currentEventsLookup.Length);
-                        List<EventAddress> currentEvents = currentEventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType || x.Bank != bank)).ToList();
+                        EventAddress template = new();
 
-                        if (currentEvents.Count < eventsLookupSize)
+                        while (currentEvents.Count < eventsLookupSize)
                         {
-                            EventAddress template = new();
-
-                            while (currentEvents.Count < eventsLookupSize)
-                            {
-                                currentEvents.Add(template);
-                            }
+                            currentEvents.Add(template);
                         }
+                    }
+                    currentEvents.CopyTo(eventsLookup, 0);
 
-                        mmfAccessor.Write(0, (byte)1);
-                        mmfAccessor.WriteArray(1, currentEvents.ToArray(), 0, currentEvents.Count);
-                    }
-                    catch (FileNotFoundException ex)
-                    {
-                        throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-                    finally
-                    {
-                        eventsSemaphore.Release();
-                    }
+                    IEnumerable<long> keys = eventsLookup.Where(x => x.Active).DistinctBy(x => x.Address).Select(x => x.Address);
+                    addressEventsLookup = keys.ToDictionary(x => x, x => eventsLookup.Select((y, idx) => new Tuple<int, long, bool>(idx, y.Address, y.Active)).Where(y => y.Item3 && y.Item2 == x).Select(y => y.Item1).ToArray());
+
+                    _eventsLookupAccessor.Write(0, (byte)1);
+                    _eventsLookupAccessor.WriteArray(1, currentEvents.ToArray(), 0, currentEvents.Count);
+                }
+                catch (FileNotFoundException ex)
+                {
+                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+                }
+                catch
+                {
+                    throw;
+                }
+                finally
+                {
+                    _eventsSemaphore.Release();
                 }
 
                 return Task.CompletedTask;

@@ -111,15 +111,15 @@ namespace GameHook.Application
                 var mapperContents = await File.ReadAllTextAsync(mapperFile.AbsolutePath);
                 if (mapperFile.AbsolutePath.EndsWith(".xml"))
                 {
-                    Mapper = GameHookMapperXmlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
+                    Mapper = GameHookMapperXmlFactory.LoadMapperFromFile(this, mapperContents);
                 }
                 else if (mapperFile.AbsolutePath.EndsWith(".yml"))
                 {
-                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
+                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperContents);
                 }
                 else if (mapperFile.AbsolutePath.EndsWith(".yaml"))
                 {
-                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperFile.AbsolutePath, mapperContents);
+                    Mapper = GameHookMapperYamlFactory.LoadMapperFromFile(this, mapperContents);
                 }
                 else
                 {
@@ -321,7 +321,7 @@ namespace GameHook.Application
             // Fields Changed
             FieldsChangedStopwatch.Restart();
 
-            var propertiesChanged = Mapper.Properties.Values.Where(x => x.FieldsChanged.Any()).ToArray();
+            var propertiesChanged = Mapper.Properties.Values.Where(x => x.FieldsChanged.Count != 0).ToArray();
             if (propertiesChanged.Length > 0)
             {
                 try

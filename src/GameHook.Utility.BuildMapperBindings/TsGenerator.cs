@@ -10,7 +10,7 @@ public static class TsGenerator
 {
     static string GetTypescriptInterface(string name)
     {
-        return $"I" + name.First().ToString().ToUpper() + name.Substring(1, name.Length - 1);
+        return string.Concat($"I", name.First().ToString().ToUpper(), name.AsSpan(1, name.Length - 1));
     }
 
     static string GetTypescriptEnumName(string name)
@@ -85,10 +85,10 @@ public static class TsGenerator
             case "macro":
                 {
                     var macroType = el.GetAttributeValue("type");
-                    var macro = el.Document.Root.XPathSelectElements(@$"//macros/{macroType}").FirstOrDefault();
+                    var macro = el?.Document?.Root?.XPathSelectElements(@$"//macros/{macroType}").FirstOrDefault();
 
-                    var tupleTypes = macro.Elements().Select(x => x.Name.LocalName is "macro" ? x.GetTypescriptType() : "\"" + x.GetElementActualName() + "\":" + x.GetTypescriptType()).ToArray();
-                    return $"{string.Join(',', tupleTypes)}";
+                    var tupleTypes = macro?.Elements().Select(x => x.Name.LocalName is "macro" ? x.GetTypescriptType() : "\"" + x.GetElementActualName() + "\":" + x.GetTypescriptType()).ToArray();
+                    return (tupleTypes != null) ? $"{string.Join(',', tupleTypes)}" : "";
                 }
             case "group":
                 {

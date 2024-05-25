@@ -17,6 +17,13 @@ namespace GameHook.Application
 {
     public record YamlRoot
     {
+        public YamlRoot()
+        {
+            meta = new();
+            properties = new Dictionary<object, object>();
+            macros = new Dictionary<string, IDictionary<object, dynamic>>();
+            glossary = new Dictionary<string, IDictionary<string, dynamic>>();
+        }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public YamlMeta meta { get; init; }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
@@ -29,6 +36,13 @@ namespace GameHook.Application
 
     public record YamlMeta
     {
+        public YamlMeta()
+        {
+            schemaVersion = 0;
+            id = Guid.Empty;
+            gameName = "";
+            gamePlatform = "";
+        }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public int schemaVersion { get; init; }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
@@ -41,6 +55,14 @@ namespace GameHook.Application
 
     public record MacroEntry
     {
+        public MacroEntry()
+        {
+            type = "";
+            address = null;
+            macro = "";
+            reference = null;
+            length = null;
+        }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
         public string type { get; init; }
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "<Pending>")]
@@ -255,7 +277,7 @@ namespace GameHook.Application
                         {
                             if(!ConvertYamlToXMLIgnoreAttrs.Contains(keyStr) && ((xmlRoot.Name != "macro" && xmlRoot.Name != "class") || !ConvertYamlToXMLIgnoreMacroParentAttrs.Contains(keyStr)))
                             {
-                                if (keyStr is not "position" || GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type") is null || (GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type").Value.Value.ToString() is not "nibble" && GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type").Value.Value.ToString() is not "bit"))
+                                if (keyStr is not "position" || GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type") is null || (GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type")!.Value.Value.ToString() is not "nibble" && GetPropertyValueKVByKey((IDictionary<dynamic, dynamic>)root, "type")!.Value.Value.ToString() is not "bit"))
                                 {
                                     XmlAttribute attr = doc.CreateAttribute(keyStr);
                                     if (keyStr == "length")
@@ -519,22 +541,25 @@ namespace GameHook.Application
 
         private static void RenameNode(XmlNode oldNode, string newChildName)
         {
-            var newnode = oldNode.OwnerDocument.CreateNode(XmlNodeType.Element, newChildName, "");
+            var newnode = (oldNode?.OwnerDocument != null) ? oldNode.OwnerDocument.CreateNode(XmlNodeType.Element, newChildName, "") : null;
 
             List<XmlAttribute> attributeList = (oldNode != null && oldNode.Attributes != null) ? oldNode.Attributes.Cast<XmlAttribute>().ToList() : [];
             List<XmlAttribute> l = [];
             foreach (XmlAttribute attr in attributeList)
             {
-                newnode.Attributes.Append(attr);
+                newnode!.Attributes!.Append(attr);
             }
 
             List<XmlNode> relocateChildrenList = (oldNode != null && oldNode.ChildNodes != null) ? oldNode.ChildNodes.Cast<XmlNode>().ToList() : [];
             foreach(XmlNode node in relocateChildrenList)
             {
-                newnode.AppendChild(node);
+                newnode!.AppendChild(node);
             }
 
-            oldNode.ParentNode.ReplaceChild(newnode, oldNode);
+            if (newnode != null && oldNode?.ParentNode != null)
+            {
+                oldNode.ParentNode.ReplaceChild(newnode, oldNode);
+            }
         }
 
         public static XmlDocument ConvertYamlToXML(YamlRoot data)
@@ -643,7 +668,7 @@ namespace GameHook.Application
 
             /* fix up reference types. */
             XmlNodeList? referenceNodeList = xmlDocument.SelectNodes(@"//property[@type='reference']");
-            List<XmlNode> referenceNodes = referenceNodeList.Cast<XmlNode>().ToList();
+            List<XmlNode> referenceNodes = (referenceNodeList != null) ? referenceNodeList.Cast<XmlNode>().ToList() : [];
 
             foreach(XmlNode node in referenceNodes)
             {
@@ -657,16 +682,19 @@ namespace GameHook.Application
                 }
                 string reference = node!.Attributes["reference"]!.Value;
                 XmlNodeList? originalGlossaryNodes = xmlDocument.SelectNodes(@"//references/" + reference);
-                foreach(XmlNode originalGlossaryNode in originalGlossaryNodes)
+                if (originalGlossaryNodes != null)
                 {
-                    XmlAttribute? type = (originalGlossaryNode != null && originalGlossaryNode.Attributes != null && originalGlossaryNode.Attributes["type"] != null) ? originalGlossaryNode.Attributes["type"] : null;
-                    if(type != null)
+                    foreach (XmlNode originalGlossaryNode in originalGlossaryNodes)
                     {
-                        node!.Attributes["type"]!.Value = type.Value;
-                    }
-                    else
-                    {
-                        node!.Attributes["type"]!.Value = "string";
+                        XmlAttribute? type = (originalGlossaryNode != null && originalGlossaryNode.Attributes != null && originalGlossaryNode.Attributes["type"] != null) ? originalGlossaryNode.Attributes["type"] : null;
+                        if (type != null)
+                        {
+                            node!.Attributes["type"]!.Value = type.Value;
+                        }
+                        else
+                        {
+                            node!.Attributes["type"]!.Value = "string";
+                        }
                     }
                 }
             }
@@ -694,7 +722,7 @@ namespace GameHook.Application
             return xmlDocument;
         }
 
-        public static IGameHookMapper LoadMapperFromFile(IGameHookInstance instance, string filePath, string mapperContents)
+        public static IGameHookMapper LoadMapperFromFile(IGameHookInstance instance, string mapperContents)
         {
             var deserializer = new DeserializerBuilder().Build();
             var data = deserializer.Deserialize<YamlRoot>(mapperContents);
@@ -702,7 +730,7 @@ namespace GameHook.Application
             mapperContents = document.OuterXml;
 
 
-            return GameHookMapperXmlFactory.LoadMapperFromFile(instance, filePath, mapperContents);
+            return GameHookMapperXmlFactory.LoadMapperFromFile(instance, mapperContents);
         }
 
         public static bool IsProperty(dynamic source, bool insideMacro, bool insideClass)
@@ -749,8 +777,8 @@ namespace GameHook.Application
             return objValEnum.Select< KeyValuePair<object, object>, KeyValuePair<object, object>?>(property => property)
                 .Where(property => 
                     property != null && property.Value.Key != null &&
-                    property.Value.Key.ToString() != null &&
-                    property.Value.Key.ToString().Equals(key, StringComparison.CurrentCultureIgnoreCase))
+                    property!.Value.Key!.ToString() != null &&
+                    property!.Value.Key!.ToString()!.Equals(key, StringComparison.CurrentCultureIgnoreCase))
                 .DefaultIfEmpty(null)
                 .FirstOrDefault();
         }

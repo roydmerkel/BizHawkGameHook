@@ -142,7 +142,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
     private void SyncEvents()
     {
-        //Debuggable.MemoryCallbacks.Clear();
+        Debuggable?.MemoryCallbacks?.Clear();
         GameHookEvents_eventsSemaphore.WaitOne();
         byte dirtyInt = 0;
         GameHookEventsLookup_Accessor?.Read(0, out dirtyInt);
@@ -383,7 +383,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                     Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventIdx: {eventIdx}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
                                                                     byte newByte = 0;
 
-                                                                    MemoryDomain domain = MemoryDomains![identifierDomain];
+                                                                    MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
                                                                     if (InstantWriteMap.ContainsKey(domain) && InstantWriteMap[domain].ContainsKey(domainAddress))
                                                                     {
                                                                         newByte = InstantWriteMap[domain][domainAddress];
@@ -393,8 +393,8 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                             byte oldByte = domain!.PeekByte(domainAddress);
                                                                             Console.WriteLine($"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
 
-                                                                            var inputBits = new BitArray(newByte);
-                                                                            var outputBits = new BitArray(oldByte);
+                                                                            var inputBits = new BitArray(new byte[] { newByte });
+                                                                            var outputBits = new BitArray(new byte[] { oldByte });
 
                                                                             foreach (var x in eventBits)
                                                                             {
@@ -405,6 +405,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                             newByte = newByteContainer[0];
                                                                         }
                                                                         Console.WriteLine($"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
+                                                                        domain!.PokeByte(domainAddress, newByte);
                                                                     }
                                                                 }
                                                             }
@@ -476,30 +477,47 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     {
                         changed = true;
                         UInt32 address = Convert.ToUInt32(data.Value.Address);
+                        UInt32 baseAddress = address;
                         PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = Platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                         MemoryDomain domain = MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress");
                         address -= Convert.ToUInt32(platformMemoryLayoutEntry.PhysicalStartingAddress);
-
-                        if(data.Value.Frozen)
-                        {
-                            if(!InstantWriteMap.ContainsKey(domain))
-                            {
-                                InstantWriteMap.Add(domain, new());
-                            }
-                        }
 
                         byte[] bytes = data.Value.GetBytes();
                         for (int i = 0; i < bytes.Length; i++)
                         {
                             domain.PokeByte(address + i, bytes[i]);
-                            if (data.Value.Frozen)
+                        }
+
+                        if (data.Value.Frozen)
+                        {
+                            PlatformMemoryLayoutEntry[] platformMemoryLayoutEntries = Platform.FindMemoryLayouts(baseAddress) ?? throw new Exception("unsupported address");
+                            MemoryDomain[] domains = platformMemoryLayoutEntries.Select(platformMemoryLayoutEntry => MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress")).ToArray();
+
+                            for (int idx = 0; idx < platformMemoryLayoutEntries.Length && idx < domains.Length; idx++)
                             {
-                                if (!InstantWriteMap[domain].ContainsKey(address + i))
+                                MemoryDomain curDomain = domains[idx];
+                                PlatformMemoryLayoutEntry curPlatformMemoryLayoutEntry = platformMemoryLayoutEntries[idx];
+                                if (!InstantWriteMap.ContainsKey(curDomain))
                                 {
-                                    InstantWriteMap[domain].Add(address + i, bytes[i]);
+                                    InstantWriteMap.Add(curDomain, new());
+                                }
+
+                                UInt32 addr = baseAddress - Convert.ToUInt32(curPlatformMemoryLayoutEntry.PhysicalStartingAddress);
+
+                                for (int i = 0; i < bytes.Length; i++)
+                                {
+                                    if (!InstantWriteMap[curDomain].ContainsKey(addr + i))
+                                    {
+                                        InstantWriteMap[curDomain].Add(addr + i, bytes[i]);
+                                    }
+                                    else
+                                    {
+                                        InstantWriteMap[curDomain][addr + i] = bytes[i];
+                                    }
                                 }
                             }
                         }
+
                     }
                     else
                     {
@@ -544,7 +562,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 Console.Out.WriteLine($"size: 0x{i.Size:X}");
             }
         }
-        foreach(var i in Debuggable.GetCpuFlagsAndRegisters())
+        foreach(var i in Debuggable?.GetCpuFlagsAndRegisters() ?? new Dictionary<string, RegisterValue>())
         {
             Console.Out.WriteLine(i.Key + ":" + i.Value.Value.ToString());
         }
@@ -1500,8 +1518,6 @@ public static class SharedPlatformConstants
                 },
                 GetBankFunctionAndCallbackDomain = (address) =>
                 {
-                    LibsnesCore snes = (LibsnesCore)debuggable;
-
                     PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
                     GetMapperBankDelegate? bankDelegate = null;
                     switch (platformMemoryLayoutEntry.BizhawkIdentifier)
@@ -1509,21 +1525,21 @@ public static class SharedPlatformConstants
                         case "ROM":
                             if (address <= 0x3FFF)
                             {
-                                bankDelegate = () => { return Convert.ToInt32(snes.GetBanks()["ROM0 BANK"]); };
+                                bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["ROM0 BANK"]); };
                             }
                             else
                             {
-                                bankDelegate = () => { return Convert.ToInt32(snes.GetBanks()["ROMX BANK"]); };
+                                bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["ROMX BANK"]); };
                             }
                             break;
                         case "VRAM":
-                            bankDelegate = () => { return Convert.ToInt32(snes.GetBanks()["VRAM BANK"]); };
+                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["VRAM BANK"]); };
                             break;
                         case "CartRAM":
-                            bankDelegate = () => { return Convert.ToInt32(snes.GetBanks()["SRAM BANK"]); };
+                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["SRAM BANK"]); };
                             break;
                         case "WRAM":
-                            bankDelegate = () => { return Convert.ToInt32(snes.GetBanks()["WRAM BANK"]); };
+                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["WRAM BANK"]); };
                             break;
                         default:
                             bankDelegate = () => { return 0xFF; };
@@ -1574,6 +1590,14 @@ public static class SharedPlatformConstants
             {
                 return i != null && i.PhysicalStartingAddress <= address && i.PhysicalEndingAddress >= address;
             }).DefaultIfEmpty(null).FirstOrDefault();
+        }
+
+        public PlatformMemoryLayoutEntry[] FindMemoryLayouts(uint address)
+        {
+            return MemoryLayout.Where(i =>
+            {
+                return i != null && i.PhysicalStartingAddress <= address && i.PhysicalEndingAddress >= address;
+            }).ToArray();
         }
     }
 
@@ -1695,7 +1719,7 @@ public static class SharedPlatformConstants
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
                     PhysicalStartingAddress = 0x0000,
-                    Length = 0x7E,
+                    Length = 0x10000,
                     EventsOnly = true
                 }
             },
@@ -1750,7 +1774,7 @@ public static class SharedPlatformConstants
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
                     PhysicalStartingAddress = 0x0000,
-                    Length = 0x7E,
+                    Length = 0x10000,
                     EventsOnly = true
                 }
             },
@@ -1805,7 +1829,7 @@ public static class SharedPlatformConstants
                     BizhawkAlternateIdentifier = "System Bus",
                     CustomPacketTransmitPosition = 0x10000,
                     PhysicalStartingAddress = 0x0000,
-                    Length = 0x7E,
+                    Length = 0x10000,
                     EventsOnly = true
                 }
             },

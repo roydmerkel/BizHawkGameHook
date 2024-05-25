@@ -83,7 +83,7 @@ namespace GameHook.Application
             };
         }
 
-        static IEnumerable<IGameHookProperty> GetProperties(XDocument doc, IGameHookInstance? instance)
+        static IGameHookProperty[] GetProperties(XDocument doc, IGameHookInstance? instance)
         {
             return doc.Descendants("properties").Descendants("property")
                 .Select<XElement, IGameHookProperty>(x =>
@@ -131,7 +131,7 @@ namespace GameHook.Application
                 .ToArray();
         }
 
-        static IEnumerable<IGameHookEvent> GetEvents(XDocument doc, IGameHookInstance? instance)
+        static IGameHookEvent[] GetEvents(XDocument doc, IGameHookInstance? instance)
         {
             return doc.Descendants("events").Descendants("event")
                 .Select<XElement, IGameHookEvent>(x =>
@@ -141,60 +141,56 @@ namespace GameHook.Application
                         if (instance == null) { throw new Exception("Instance is null."); }
 
                         EventType eventType;
-                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_hardreset", StringComparison.InvariantCultureIgnoreCase))
                         {
                             eventType = EventType.EventType_HardReset;
                         }
-                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_softreset")
+                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_softreset", StringComparison.InvariantCultureIgnoreCase))
                         {
                             eventType = EventType.EventType_SoftReset;
                         }
-                        else
+                        else if(x != null)
                         {
                             eventType = x.GetAttributeValueAsEventType("event-type");
+                        }
+                        else
+                        {
+                            throw new Exception("unexpected null");
                         }
 
                         var variables = new EventAttributes()
                         {
                             Name = x.Attribute("name")!.Value,
                             EventType = eventType,
-                            Address = (x == null || x.Attribute("name") == null || x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset" || x.Attribute("name")!.Value.ToLowerInvariant() == "_softreset") ? null : x.GetOptionalAttributeValue("address"),
-                            Bank = (x == null || x.Attribute("bank") == null) ? ushort.MaxValue : ushort.Parse(x.GetOptionalAttributeValue("bank")),
-                            EventRegisterOverrides = x.Descendants("override").Select(x =>
+                            Address = (x == null || x.Attribute("name") == null || x.Attribute("name")!.Value.Equals("_hardreset", StringComparison.InvariantCultureIgnoreCase) || x.Attribute("name")!.Value.Equals("_softreset", StringComparison.InvariantCultureIgnoreCase)) ? null : x.GetOptionalAttributeValue("address"),
+                            Bank = (x == null || x.Attribute("bank") == null) ? ushort.MaxValue : ushort.Parse(x.GetOptionalAttributeValue("bank") ?? throw new Exception("unexpected null")),
+                            EventRegisterOverrides = x!.Descendants("override").Select(x =>
                             {
                                 return new EventRegisterOverride(x.Attribute("register")?.Value, x.Attribute("value")?.Value);
                             }),
                         };
 
-                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_hardreset", StringComparison.InvariantCultureIgnoreCase))
                         {
                             return new HardResetEvent(instance, variables);
                         }
-                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.ToLowerInvariant() == "_hardreset")
+                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_hardreset", StringComparison.InvariantCultureIgnoreCase))
                         {
                             return new SoftResetEvent(instance, variables);
                         }
                         else
                         {
-                            switch (eventType)
+                            return eventType switch
                             {
-                                case EventType.EventType_Read:
-                                    return new ReadEvent(instance, variables);
-                                case EventType.EventType_ReadWrite:
-                                    return new ReadWriteEvent(instance, variables);
-                                case EventType.EventType_ReadExecute:
-                                    return new ReadExecuteEvent(instance, variables);
-                                case EventType.EventType_Write:
-                                    return new WriteEvent(instance, variables);
-                                case EventType.EventType_WriteExecute:
-                                    return new WriteExecuteEvent(instance, variables);
-                                case EventType.EventType_ReadWriteExecute:
-                                    return new ReadWriteExecuteEvent(instance, variables);
-                                case EventType.EventType_Execute:
-                                    return new ExecuteEvent(instance, variables);
-                                default:
-                                    throw new Exception($"Unknown event type {eventType}.");
-                            }
+                                EventType.EventType_Read => new ReadEvent(instance, variables),
+                                EventType.EventType_ReadWrite => new ReadWriteEvent(instance, variables),
+                                EventType.EventType_ReadExecute => new ReadExecuteEvent(instance, variables),
+                                EventType.EventType_Write => new WriteEvent(instance, variables),
+                                EventType.EventType_WriteExecute => new WriteExecuteEvent(instance, variables),
+                                EventType.EventType_ReadWriteExecute => new ReadWriteExecuteEvent(instance, variables),
+                                EventType.EventType_Execute => new ExecuteEvent(instance, variables),
+                                _ => throw new Exception($"Unknown event type {eventType}."),
+                            };
                         }
                     }
                     catch (Exception ex)
@@ -235,7 +231,7 @@ namespace GameHook.Application
                 });
         }
 
-        public static IGameHookMapper LoadMapperFromFile(IGameHookInstance? instance, string filePath, string mapperContents)
+        public static IGameHookMapper LoadMapperFromFile(IGameHookInstance? instance, string mapperContents)
         {
             var doc = XDocument.Parse(mapperContents.Replace("{", string.Empty).Replace("}", string.Empty));
 

@@ -213,17 +213,20 @@ namespace GameHook.Infrastructure.Drivers
                     var data = await ReadMemoryAddress(x.Item1, x.Item2, x.Item3);
                     return new Tuple<uint, uint, byte[]>(x.Item1, x.Item2, data);
                 }).ToList();
-                var taskResults = await Task.WhenAny(Task.WhenAll(tasks));
-                for (var idx = tasks.Count - 1; idx >= 0; idx--)
+                if (tasks != null)
                 {
-                    if (tasks[idx].Status == TaskStatus.RanToCompletion)
+                    var taskResults = await Task.WhenAny(Task.WhenAll(tasks));
+                    for (var idx = tasks.Count - 1; idx >= 0; idx--)
                     {
-                        toReadBlocks.Remove(toReadBlocks[idx]);
-                        results.Add(tasks[idx].Result);
-                    }
-                    else if (tasks[idx].Status == TaskStatus.Faulted && tasks[idx].Exception != null)
-                    {
-                        exceptions.Add(tasks[idx].Exception);
+                        if (tasks?[idx]?.Status == TaskStatus.RanToCompletion)
+                        {
+                            toReadBlocks.Remove(toReadBlocks[idx]);
+                            results.Add(tasks[idx].Result);
+                        }
+                        else if (tasks?[idx]?.Status == TaskStatus.Faulted && tasks?[idx]?.Exception != null)
+                        {
+                            exceptions.Add(tasks[idx].Exception ?? throw new Exception("unexpected null exception."));
+                        }
                     }
                 }
             }
@@ -271,7 +274,7 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size)
+        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
         {
             Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
             return Task.CompletedTask;
