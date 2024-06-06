@@ -1,4 +1,5 @@
 ﻿using GameHook.Domain.Interfaces;
+using System.Drawing;
 
 namespace GameHook.Domain.GameHookEvents
 {
@@ -6,21 +7,26 @@ namespace GameHook.Domain.GameHookEvents
     {
         public SoftResetEvent(IGameHookInstance instance, EventAttributes variables) : base(instance, variables)
         {
-            SetEvent("_softreset", 0, 0, null, 1, 0, false);
+            Name = "_softreset";
+            Address = 0;
+            Bank = ushort.MaxValue;
+            Bits = null;
+            Length = 1;
+            Size = 0;
         }
 
-        public override void ClearEvent(MemoryAddress address, ushort bank)
+        public override void ClearEvent(IGameHookEvent ev)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.RemoveEvent(0, ushort.MaxValue, EventType.EventType_SoftReset);
+                Instance.Driver.RemoveEvent(EventType.EventType_SoftReset, this);
             }
         }
-        public override void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size, bool instantaneous)
+        public override void SetEvent(IGameHookEvent ev)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.AddEvent("_softreset", 0, ushort.MaxValue, EventType.EventType_SoftReset, EventRegisterOverrides, bits, length, size, instantaneous);
+                Instance.Driver.AddEvent(EventType.EventType_SoftReset, this);
             }
         }
     }

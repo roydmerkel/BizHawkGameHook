@@ -2,12 +2,8 @@
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class BinaryCodedDecimalProperty : GameHookProperty, IGameHookProperty
+    public class BinaryCodedDecimalProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables), IGameHookProperty
     {
-        public BinaryCodedDecimalProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
-        {
-        }
-
         protected override byte[] FromValue(string value)
         {
             throw new NotImplementedException();

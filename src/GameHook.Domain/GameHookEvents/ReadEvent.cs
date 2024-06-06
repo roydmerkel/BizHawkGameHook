@@ -2,24 +2,20 @@
 
 namespace GameHook.Domain.GameHookEvents
 {
-    public class ReadEvent : GameHookEvent, IGameHookEvent
+    public class ReadEvent(IGameHookInstance instance, EventAttributes variables) : GameHookEvent(instance, variables), IGameHookEvent
     {
-        public ReadEvent(IGameHookInstance instance, EventAttributes variables) : base(instance, variables)
-        {
-        }
-
-        public override void ClearEvent(MemoryAddress address, ushort bank)
+        public override void ClearEvent(IGameHookEvent ev)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.RemoveEvent(address, bank, EventType.EventType_Read);
+                Instance.Driver.RemoveEvent(EventType.EventType_Read, this);
             }
         }
-        public override void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size, bool instantaneous)
+        public override void SetEvent(IGameHookEvent ev)
         {
             if (Instance != null && Instance.Driver != null)
             {
-                Instance.Driver.AddEvent(name, address, bank, EventType.EventType_Read, EventRegisterOverrides, bits, length, size, instantaneous);
+                Instance.Driver.AddEvent(EventType.EventType_Read, this);
             }
         }
     }

@@ -6,10 +6,7 @@ namespace GameHook.Domain.GameHookProperties
     {
         public StringProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
         {
-            if (Reference == null)
-            {
-                Reference = "defaultCharacterMap";
-            }
+            Reference ??= "defaultCharacterMap";
         }
 
         protected override byte[] FromValue(string value)
@@ -49,7 +46,7 @@ namespace GameHook.Domain.GameHookProperties
             if (Instance.PlatformOptions == null) throw new Exception("Instance.PlatformOptions is NULL.");
             if (ComputedReference == null) { throw new Exception("ReferenceObject is NULL."); }
 
-            string?[] results = Array.Empty<string>();
+            string?[] results = [];
 
             if (Size > 1)
             {

@@ -1,5 +1,10 @@
 ﻿namespace GameHook.Domain
 {
+    public interface ISerializable
+    {
+        public byte[] Serialize();
+    }
+
     public enum EndianTypes
     {
         BigEndian,

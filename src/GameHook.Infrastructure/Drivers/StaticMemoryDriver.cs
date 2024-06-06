@@ -5,18 +5,13 @@ using System.Text.Json;
 
 namespace GameHook.Infrastructure.Drivers
 {
-    public class StaticMemoryDriver : IStaticMemoryDriver
+    public class StaticMemoryDriver(ILogger<StaticMemoryDriver> logger) : IStaticMemoryDriver
     {
         public string ProperName => "StaticMemory";
         public int DelayMsBetweenReads { get; } = 25;
 
-        private readonly ILogger<StaticMemoryDriver> _logger;
+        private readonly ILogger<StaticMemoryDriver> _logger = logger;
         private Dictionary<uint, byte[]> MemoryFragmentLayout { get; set; } = [];
-
-        public StaticMemoryDriver(ILogger<StaticMemoryDriver> logger)
-        {
-            _logger = logger;
-        }
 
         public Task EstablishConnection()
         {
@@ -73,7 +68,7 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
+        public Task AddEvent(EventType eventType, IGameHookEvent eventObj)
         {
             if (BuildEnvironment.IsDebug == false)
             {
@@ -83,7 +78,7 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task RemoveEvent(long address, ushort bank, EventType eventType)
+        public Task RemoveEvent(EventType eventType, IGameHookEvent eventObj)
         {
             if (BuildEnvironment.IsDebug == false)
             {

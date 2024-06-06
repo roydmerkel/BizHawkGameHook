@@ -3,10 +3,12 @@ using BizHawk.Client.EmuHawk;
 using BizHawk.Common;
 using BizHawk.Common.StringExtensions;
 using BizHawk.Emulation.Common;
+using BizHawk.Emulation.Cores.Computers.AppleII;
 using BizHawk.Emulation.Cores.Nintendo.Gameboy;
 using BizHawk.Emulation.Cores.Nintendo.GBHawk;
 using BizHawk.Emulation.Cores.Nintendo.Sameboy;
 using BizHawk.Emulation.Cores.Nintendo.SNES;
+using GameHook.Integrations.BizHawk;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -17,6 +19,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using static BizHawk.Emulation.Cores.Nintendo.GBA.LibmGBA;
 using static GameHook.Integrations.BizHawk.BizHawkInterface;
 using static GameHookIntegration.SharedPlatformConstants;
 using static GameHookIntegration.SharedPlatformConstants.PlatformMapper;
@@ -73,17 +76,21 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     private readonly MemoryMappedFile? GameHookData_MemoryMappedFile;
     private readonly MemoryMappedViewAccessor? GameHookData_Accessor;
 
-    private readonly MemoryMappedFile? GameHookEventsLookup_MemoryMappedFile;
-    private readonly MemoryMappedViewAccessor? GameHookEventsLookup_Accessor;
-    private readonly int GameHookEventsLookup_ElementSize;
-    private readonly Semaphore GameHookEvents_eventsSemaphore;
-
     private readonly MemoryMappedFile? GameHookWriteCall_MemoryMappedFile;
     private readonly MemoryMappedViewAccessor? GameHookWriteCall_Accessor;
     private readonly int GameHookWriteCall_ElementSize;
     private readonly Semaphore GameHookWriteCall_Semaphore;
 
+    private readonly object GameHook_EventLock = new();
+    private IDictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>> GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
+    private IDictionary<ulong, IDictionary<EventType, EventAddress>> GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+    private IDictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry> scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
+    private SharedPlatformConstants.PlatformMapper? Mapper = null;
+    private Queue<PipeBase<EventOperation>.PipeReadArgs> eventOperationsQueue = new();
+
     private readonly Dictionary<MemoryDomain, Dictionary<long, byte>> InstantWriteMap;
+
+    private readonly PipeServer<EventOperation>? eventsPipe;
 
     private byte[] DataBuffer { get; } = new byte[SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE];
 
@@ -116,13 +123,6 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         GameHookData_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_DATA.bin", SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE, MemoryMappedFileAccess.ReadWrite);
         GameHookData_Accessor = GameHookData_MemoryMappedFile.CreateViewAccessor();
 
-        GameHookEventsLookup_ElementSize = Marshal.SizeOf(typeof(EventAddress));
-        long memoryMappedSize = 1 + GameHookEventsLookup_ElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-        GameHookEventsLookup_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
-        GameHookEventsLookup_Accessor = GameHookEventsLookup_MemoryMappedFile.CreateViewAccessor(0, memoryMappedSize, MemoryMappedFileAccess.ReadWrite);
-
-        GameHookEvents_eventsSemaphore = new Semaphore(initialCount: 1, maximumCount: 1, name: "GAMEHOOK_BIZHAWK_EVENTS.semaphore");
-
         GameHookWriteCall_ElementSize = Marshal.SizeOf(typeof(WriteCall));
         long writeEventsMappedSize = sizeof (int) + sizeof (int) + GameHookWriteCall_ElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE; // front, rear, array.
         GameHookWriteCall_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", writeEventsMappedSize, MemoryMappedFileAccess.ReadWrite);
@@ -138,309 +138,348 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         GameHookWriteCall_Semaphore = new Semaphore(initialCount: 1, maximumCount: 1, name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
 
         InstantWriteMap = new();
+
+        eventsPipe = new("GAMEHOOK_BIZHAWK_EVENTS.pipe", x => EventOperation.Deserialize(x));
+        eventsPipe.PipeReadEvent += OnEventRead;
     }
 
-    private void SyncEvents()
+    private void OnEventRead(object sender, PipeBase<EventOperation>.PipeReadArgs e)
     {
-        Debuggable?.MemoryCallbacks?.Clear();
-        GameHookEvents_eventsSemaphore.WaitOne();
-        byte dirtyInt = 0;
-        GameHookEventsLookup_Accessor?.Read(0, out dirtyInt);
-        bool dirty = dirtyInt != 0;
-        if (dirty)
+        lock(GameHook_EventLock)
         {
-            IDictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry> scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
-            if (Platform != null)
-            {
-                foreach (var i in Platform.MemoryLayout)
-                {
-                    if(!scopeToEntry.ContainsKey(i.BizhawkAlternateIdentifier))
-                        scopeToEntry.Add(i.BizhawkAlternateIdentifier, i);
-                    if (!scopeToEntry.ContainsKey(i.BizhawkIdentifier))
-                        scopeToEntry.Add(i.BizhawkIdentifier, i);
-                }
-            }
-            EventAddress[] eventAddressLookups = new EventAddress[SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE];
-            GameHookEventsLookup_Accessor?.ReadArray(1, eventAddressLookups, 0, SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE);
+            eventOperationsQueue.Enqueue(e);
+        }
+    }
 
-            if (Platform == null)
-            {
-                throw new Exception("Callbacks aren't supported yet on this platform.");
-            }
-            if (Platform.GetMapper == null)
-            {
-                throw new Exception("Callbacks aren't supported yet on this platform.");
-            }
-            SharedPlatformConstants.PlatformMapper Mapper = Platform.GetMapper(Platform, Emulator, MemoryDomains, Debuggable, BoardInfo?.BoardName);
-            if (Mapper.GetBankFunctionAndCallbackDomain == null)
-            {
-                throw new Exception("Callbacks aren't supported yet on this platform.");
-            }
-            if(Debuggable == null)
-            {
-                throw new Exception("Callbacks aren't supported yet on this platform.");
-            }
-
-            // process events into tuples.
-            int idx = -1;
-            List<Tuple<int, long, string, int[], EventAddress, Tuple<string, int>[]>> processedEventAddressLookups = new();
-            foreach (var x in eventAddressLookups)
-            {
-                idx++;
-                if (!x.Active)
+    private void ProcessEventOperation(PipeBase<EventOperation>.PipeReadArgs e)
+    {
+        if (Mapper?.GetBankFunctionAndCallbackDomain == null)
+        {
+            throw new Exception("Callbacks aren't supported yet on this platform.");
+        }
+        if (Debuggable == null || !Debuggable.MemoryCallbacksAvailable())
+        {
+            throw new Exception("Callbacks aren't supported yet on this platform.");
+        }
+        switch (e.Arg.OpType)
+        {
+            case EventOperationType.EventOperationType_Clear:
                 {
-                    continue;
+                    Debuggable?.MemoryCallbacks?.Clear();
+                    GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
+                    GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+                    break;
                 }
-                else if ((x.EventType & ~(EventType.EventType_HardReset | EventType.EventType_SoftReset)) == 0)
+            case EventOperationType.EventOperationType_Add:
                 {
-                    continue;
-                }
-                else
-                {
-                    var untransformedOverrides = x.GetOverrides();
-                    Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.GetRegisterString(), Convert.ToInt32(x.Value))).ToArray();
-                    string bitsString = x.GetBitsString();
-                    List<int> bits = new();
-                    if (bitsString != null && bitsString != "")
+                    if (Platform == null)
                     {
-                        foreach (var subset in bitsString.Split(','))
+                        throw new NullReferenceException(nameof(Platform));
+                    }
+                    if (e.Arg?.EventAddress == null)
+                        throw new NullReferenceException(nameof(e.Arg.EventAddress));
+                    EventType evEventType = e.Arg.EventType;
+                    ulong? serial = e.Arg.EventSerial;
+                    if (serial == null)
+                        throw new NullReferenceException(nameof(serial));
+                    ulong serialValue = serial.Value;
+                    EventAddress ev = e.Arg.EventAddress;
+                    if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
+                    {
+                        if ((ev.EventType & EventType.EventType_HardReset) != 0)
                         {
-                            string[] range = subset.Split('-');
-                            if (range.Length > 2 || range.Length <= 0 || range[0] == "")
+                            HardReset = new HardResetCallbackDelegate(() =>
                             {
-                                throw new Exception("missing string or missing hyphen");
-                            }
-                            else if (range.Length == 1)
+                                Console.Out.WriteLine($"_hardreset");
+                                return;
+                            });
+                        }
+                        if ((ev.EventType & EventType.EventType_SoftReset) != 0)
+                        {
+                            SoftReset = new SoftResetCallbackDelegate(() =>
                             {
-                                if (int.TryParse(range[0], out int startEnd))
+                                Console.Out.WriteLine($"_softreset");
+                                return;
+                            });
+                        }
+                    }
+                    else
+                    {
+                        // get overrides, and bits into a format that's usable
+                        ushort eventBank = ev.Bank;
+                        string eventName = ev.Name;
+                        int length = (ev.Length > 0) ? ev.Length : 1;
+                        int size = (ev.Size > 0) ? ev.Size : 1;
+                        long eventAddress = ev.Address;
+                        string eventBits = ev.Bits;
+                        List<int> eventBitsList = new();
+                        if (eventBits != null && eventBits != "")
+                        {
+                            foreach (var subset in eventBits.Split(','))
+                            {
+                                string[] range = subset.Split('-');
+                                if (range.Length > 2 || range.Length <= 0 || range[0] == "")
                                 {
-                                    int start = startEnd;
-                                    int end = startEnd;
-                                    bits.AddRange(Enumerable.Range(start, end - start + 1));
+                                    throw new Exception("missing string or missing hyphen");
+                                }
+                                else if (range.Length == 1)
+                                {
+                                    if (int.TryParse(range[0], out int startEnd))
+                                    {
+                                        int start = startEnd;
+                                        int end = startEnd;
+                                        eventBitsList.AddRange(Enumerable.Range(start, end - start + 1));
+                                    }
+                                    else
+                                    {
+                                        throw new Exception($"unexpected range: {subset}");
+                                    }
                                 }
                                 else
                                 {
-                                    throw new Exception($"unexpected range: {subset}");
-                                }
-                            }
-                            else
-                            {
-                                if (int.TryParse(range[0], out int start) && int.TryParse(range[1], out int end))
-                                {
-                                    bits.AddRange(Enumerable.Range(start, end - start + 1));
-                                }
-                                else
-                                {
-                                    throw new Exception($"unexpected range: {subset}");
+                                    if (int.TryParse(range[0], out int start) && int.TryParse(range[1], out int end))
+                                    {
+                                        eventBitsList.AddRange(Enumerable.Range(start, end - start + 1));
+                                    }
+                                    else
+                                    {
+                                        throw new Exception($"unexpected range: {subset}");
+                                    }
                                 }
                             }
                         }
-                    }
-                    Tuple<int, long, string, int[], EventAddress, Tuple<string, int>[]> processedEventAddressLookup = new(idx, 0, x.GetNameString(), bits.ToArray(), x, overrides);
-                    processedEventAddressLookups.Add(processedEventAddressLookup);
-                }
-            }
+                        var untransformedOverrides = ev.EventAddressRegisterOverrides;
+                        Tuple<string, int>[] overrides = untransformedOverrides.Select(x => new Tuple<string, int>(x.Register, Convert.ToInt32(x.Value))).ToArray();
 
-            // clear all current breakpoints.
-            Console.WriteLine($"Clearing events.");
-            Debuggable?.MemoryCallbacks?.Clear();
-            HardReset = null;
-            SoftReset = null;
-
-            // get list of unique addressess to break on.
-            List<long> breakAddresses = new();
-            foreach(var x in processedEventAddressLookups)
-            {
-                    int length = (x.Item5.Length > 0) ? x.Item5.Length : 1;
-                    int size = (x.Item5.Size > 0) ? x.Item5.Size : 1;
-                    long address = x.Item5.Address;
-                    for (var i = address; i < address + (length * size); i++)
-                    {
-                        breakAddresses.Add(i);
-                    }
-                    breakAddresses = breakAddresses.Distinct().ToList();
-                    breakAddresses.Sort();
-            }
-            Console.Out.WriteLine("breakAddresses:");
-            foreach (var address in breakAddresses)
-            {
-                Console.Out.WriteLine(address);
-            }
-            // group each events by address.
-            EventType[] eventTypes = new EventType[] { EventType.EventType_Read, EventType.EventType_Write, EventType.EventType_Execute };
-            MemoryCallbackType[] callbacktypes = new MemoryCallbackType[] { MemoryCallbackType.Read, MemoryCallbackType.Write, MemoryCallbackType.Execute };
-            Dictionary<long, Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>>> breakAddressessTypeBankEventAddressess = new();
-            foreach(var address in breakAddresses)
-            {
-                foreach(var x in processedEventAddressLookups)
-                {
-                    int length = (x.Item5.Length > 0) ? x.Item5.Length : 1;
-                    int size = (x.Item5.Size > 0) ? x.Item5.Size : 1;
-                    long eventAddress = x.Item5.Address;
-
-                    if (eventAddress <= address && eventAddress + (length * size) > address)
-                    {
-                        if (!breakAddressessTypeBankEventAddressess.ContainsKey(address))
+                        // get list of unique addressess to break on.
+                        List<long> breakAddresses = new();
+                        for (var i = eventAddress; i < eventAddress + (length * size); i++)
                         {
-                            breakAddressessTypeBankEventAddressess.Add(address, new Dictionary<MemoryCallbackType, Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>>());
+                            breakAddresses.Add(i);
                         }
+                        breakAddresses = breakAddresses.Distinct().ToList();
+                        breakAddresses.Sort();
+
+                        Console.Out.WriteLine("breakAddresses:");
+                        foreach (var breakAddress in breakAddresses)
+                        {
+                            Console.Out.WriteLine(breakAddress);
+                        }
+
+                        // group each events by address.
+                        EventType eventEventType = ev.EventType;
+
+                        EventType[] eventTypes = new EventType[] { EventType.EventType_Read, EventType.EventType_Write, EventType.EventType_Execute };
+                        MemoryCallbackType[] callbacktypes = new MemoryCallbackType[] { MemoryCallbackType.Read, MemoryCallbackType.Write, MemoryCallbackType.Execute };
+                        List<MemoryCallbackType> breakMemoryCallbacks = new();
+                        List<EventType> breakEventTypes = new();
                         int callbackTypeIdx = -1;
                         foreach (var eventType in eventTypes)
                         {
                             callbackTypeIdx++;
-                            if ((x.Item5.EventType & eventType) != 0)
+                            if ((eventEventType & eventType) != 0)
                             {
-                                if (!breakAddressessTypeBankEventAddressess[address].ContainsKey(callbacktypes[callbackTypeIdx]))
+                                breakMemoryCallbacks.Add(callbacktypes[callbackTypeIdx]);
+                                breakEventTypes.Add(eventType);
+                            }
+                        }
+
+                        Dictionary<long, List<Tuple<long, int[]?>>> breakAddressessTypeBankEventAddressess = new();
+
+                        foreach (var breakAddress in breakAddresses)
+                        {
+                            if (eventAddress <= breakAddress && eventAddress + (length * size) > breakAddress)
+                            {
+                                if (!breakAddressessTypeBankEventAddressess.ContainsKey(breakAddress))
                                 {
-                                    breakAddressessTypeBankEventAddressess[address].Add(callbacktypes[callbackTypeIdx], new Dictionary<ushort, List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>>());
+                                    breakAddressessTypeBankEventAddressess.Add(breakAddress, new List<Tuple<long, int[]?>>());
                                 }
-                                if (!breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]].ContainsKey(x.Item5.Bank))
-                                {
-                                    breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]].Add(x.Item5.Bank, new List<Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>>());
-                                }
+
                                 int[]? bits = null;
-                                if(x.Item4 != null && x.Item4.Length >= 1)
+                                if (eventBitsList != null && eventBitsList.Count >= 1)
                                 {
-                                    long offset = address - eventAddress;
+                                    long offset = breakAddress - eventAddress;
                                     int bitOffsetStart = Convert.ToInt32(offset * 8);
                                     int bitOffsetEnd = bitOffsetStart + 8;
-                                    bits = x.Item4.Where(x => x >= bitOffsetStart && x < bitOffsetEnd).Select(x => x - bitOffsetStart).ToArray();
+                                    bits = eventBitsList.Where(x => x >= bitOffsetStart && x < bitOffsetEnd).Select(x => x - bitOffsetStart).ToArray();
                                 }
-                                breakAddressessTypeBankEventAddressess[address][callbacktypes[callbackTypeIdx]][x.Item5.Bank].Add(new Tuple<int, long, string, int[]?, EventAddress, Tuple<string, int>[]>(x.Item1, address - eventAddress, x.Item3, bits, x.Item5, x.Item6));
+                                breakAddressessTypeBankEventAddressess[breakAddress].Add(new Tuple<long, int[]?>(breakAddress - eventAddress, bits));
+                            }
+                        }
+
+                        // setup callbacks for addressess.
+                        foreach (var breakAddressTypeBankEventAddress in breakAddressessTypeBankEventAddressess)
+                        {
+                            bool found = false;
+                            var address = breakAddressTypeBankEventAddress.Key;
+
+                            string identifierDomain = "";
+                            long domainAddress = 0;
+                            Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(address));
+                            string domain = GetMapperBankAndDomain.Item2;
+                            GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
+                            GetBank ??= () =>
+                            {
+                                return 0;
+                            };
+                            foreach (SharedPlatformConstants.PlatformMemoryLayoutEntry i in Platform.MemoryLayout)
+                            {
+                                if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
+                                {
+                                    identifierDomain = Debuggable!.MemoryCallbacks.AvailableScopes.Contains(i.BizhawkIdentifier) ? i.BizhawkIdentifier : i.BizhawkAlternateIdentifier;
+                                    found = true;
+                                    domainAddress = address - i.PhysicalStartingAddress;
+                                }
+                            }
+                            if (!found)
+                            {
+                                throw new Exception($"Unsupported memory address 0x{address:X}");
+                            }
+                            foreach (var eventTypeEventAddresses in breakAddressTypeBankEventAddress.Value)
+                            {
+                                foreach (var eventType in breakMemoryCallbacks)
+                                {
+                                    if (!GameHook_EventCallbacks.ContainsKey(ev))
+                                    {
+                                        GameHook_EventCallbacks.Add(ev, new Dictionary<EventType, IMemoryCallback[]>());
+                                    }
+                                    if (!GameHook_EventCallbacks[ev].ContainsKey(evEventType))
+                                    {
+                                        GameHook_EventCallbacks[ev].Add(evEventType, Array.Empty<IMemoryCallback>());
+                                    }
+                                    Console.WriteLine($"Adding event --> {address:X}, {eventType}: BizHawkGameHook_{address:X}_{eventType}.");
+                                    IMemoryCallback callback = new MemoryCallback(identifierDomain,
+                                                            eventType,
+                                                            $"BizHawkGameHook_{address:X}_{eventType}",
+                                                            new MemoryCallbackDelegate(
+                                                                (address, value, flags) =>
+                                                                {
+                                                                    ushort[] banks = new ushort[] { ushort.MaxValue, Convert.ToUInt16(GetBank()) };
+                                                                    foreach (var bank in banks)
+                                                                    {
+                                                                        if (eventBank == bank)
+                                                                        {
+                                                                            var eventOffset = eventTypeEventAddresses.Item1;
+                                                                            var eventBits = eventTypeEventAddresses.Item2;
+                                                                            if (overrides != null)
+                                                                            {
+                                                                                foreach (var i in overrides)
+                                                                                {
+                                                                                    Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
+                                                                                    Debuggable.SetCpuRegister(i.Item1, i.Item2);
+                                                                                }
+                                                                            }
+                                                                            if (eventType == MemoryCallbackType.Execute)
+                                                                            {
+                                                                                Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                            }
+                                                                            else if (eventType == MemoryCallbackType.Read)
+                                                                            {
+                                                                                Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                byte newByte = 0;
+
+                                                                                MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
+                                                                                if (InstantWriteMap.ContainsKey(domain) && InstantWriteMap[domain].ContainsKey(domainAddress))
+                                                                                {
+                                                                                    newByte = InstantWriteMap[domain][domainAddress];
+
+                                                                                    if (eventBits != null && eventBits.Length > 0)
+                                                                                    {
+                                                                                        byte oldByte = domain!.PeekByte(domainAddress);
+                                                                                        Console.WriteLine($"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
+
+                                                                                        var inputBits = new BitArray(new byte[] { newByte });
+                                                                                        var outputBits = new BitArray(new byte[] { oldByte });
+
+                                                                                        foreach (var x in eventBits)
+                                                                                        {
+                                                                                            outputBits[x] = inputBits[x];
+                                                                                        }
+                                                                                        byte[] newByteContainer = new byte[1];
+                                                                                        outputBits.CopyTo(newByteContainer, 0);
+                                                                                        newByte = newByteContainer[0];
+                                                                                    }
+                                                                                    Console.WriteLine($"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
+                                                                                    domain!.PokeByte(domainAddress, newByte);
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    return;
+                                                                }
+                                                            ),
+                                                            Convert.ToUInt32(domainAddress),
+                                                            null);
+                                    Debuggable!.MemoryCallbacks!.Add(callback);
+                                    GameHook_EventCallbacks[ev][evEventType] = GameHook_EventCallbacks[ev][evEventType].Append(callback).ToArray();
+                                }
                             }
                         }
                     }
-                }
-            }
-            // setup callbacks for addressess.
-            foreach (var breakAddressTypeBankEventAddress in breakAddressessTypeBankEventAddressess)
-            {
-                bool found = false;
-                var address = breakAddressTypeBankEventAddress.Key;
+                    if (!GameHook_SerialToEvent.ContainsKey(serialValue))
+                        GameHook_SerialToEvent.Add(serialValue, new Dictionary<EventType, EventAddress>());
+                    GameHook_SerialToEvent[serialValue].Add(evEventType, ev);
 
-                string identifierDomain = "";
-                long domainAddress = 0;
-                Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(address));
-                string domain = GetMapperBankAndDomain.Item2;
-                GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
-                GetBank ??= () =>
-                    {
-                        return 0;
-                    };
-                foreach (SharedPlatformConstants.PlatformMemoryLayoutEntry i in Platform.MemoryLayout)
+                    break;
+                }
+            case EventOperationType.EventOperationType_Remove:
                 {
-                    if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
+                    ulong? serial = e.Arg.EventSerial;
+                    if (serial == null || !GameHook_SerialToEvent.ContainsKey(serial.Value))
+                        throw new NullReferenceException(nameof(serial));
+                    EventType evEventType = e.Arg.EventType;
+                    ulong serialValue = serial.Value;
+                    EventAddress ev = GameHook_SerialToEvent[serialValue][evEventType];
+                    if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
                     {
-                        identifierDomain = Debuggable!.MemoryCallbacks.AvailableScopes.Contains(i.BizhawkIdentifier) ? i.BizhawkIdentifier : i.BizhawkAlternateIdentifier;
-                        found = true;
-                        domainAddress = address - i.PhysicalStartingAddress;
+                        if ((ev.EventType & EventType.EventType_SoftReset) != 0)
+                        {
+                            if (SoftReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                SoftReset = null;
+                            }
+                        }
+                        if ((ev.EventType & EventType.EventType_HardReset) != 0)
+                        {
+                            if (HardReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                HardReset = null;
+                            }
+                        }
                     }
+                    else
+                    {
+                        if (GameHook_EventCallbacks == null || !GameHook_EventCallbacks.ContainsKey(ev))
+                            throw new NullReferenceException(nameof(serial));
+                        IList<MemoryCallbackDelegate> delegates = new List<MemoryCallbackDelegate>();
+                        foreach (var op in GameHook_EventCallbacks[ev][evEventType])
+                        {
+                            delegates.Add(op.Callback);
+                        }
+                        Debuggable.MemoryCallbacks.RemoveAll(delegates);
+                        GameHook_EventCallbacks[ev].Remove(evEventType);
+                        if (GameHook_EventCallbacks[ev].Count <= 0)
+                            GameHook_EventCallbacks.Remove(ev);
+                    }
+                    GameHook_SerialToEvent[serialValue].Remove(evEventType);
+                    if (GameHook_SerialToEvent[serialValue].Count <= 0)
+                        GameHook_SerialToEvent.Remove(serialValue);
+                    break;
                 }
-                if (!found)
+            default:
+            case EventOperationType.EventOperationType_Undefined:
                 {
-                    throw new Exception($"Unsupported memory address 0x{address:X}");
+                    throw new Exception($"Unexpected event operation type: {e.Arg.OpType}");
                 }
-                foreach (var eventTypeBankEventAddresses in breakAddressTypeBankEventAddress.Value)
-                {
-                    var eventType = eventTypeBankEventAddresses.Key;
-                    var eventBankEventAddress = eventTypeBankEventAddresses.Value;
-
-                    Console.WriteLine($"Adding event --> {address:X}, {eventType}: BizHawkGameHook_{address:X}_{eventType}.");
-                    Debuggable!.MemoryCallbacks!.Add(
-                        new MemoryCallback(identifierDomain,
-                                            eventType,
-                                            $"BizHawkGameHook_{address:X}_{eventType}",
-                                            new MemoryCallbackDelegate(
-                                                (address, value, flags) =>
-                                                {
-                                                    ushort[] banks = new ushort[] { ushort.MaxValue, Convert.ToUInt16(GetBank()) };
-                                                    foreach(var bank in banks)
-                                                    {
-                                                        if (eventBankEventAddress.ContainsKey(bank))
-                                                        {
-                                                            foreach (var callback in eventBankEventAddress[bank])
-                                                            {
-                                                                var eventIdx = callback.Item1;
-                                                                var eventOffset = callback.Item2;
-                                                                var eventName = callback.Item3;
-                                                                var eventBits = callback.Item4;
-                                                                var eventAddress = callback.Item5;
-                                                                var overrides = callback.Item6;
-                                                                if (overrides != null)
-                                                                {
-                                                                    foreach (var i in overrides)
-                                                                    {
-                                                                        Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
-                                                                        Debuggable.SetCpuRegister(i.Item1, i.Item2);
-                                                                    }
-                                                                }
-                                                                if (eventType == MemoryCallbackType.Execute)
-                                                                {
-                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventIdx: {eventIdx}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
-                                                                }
-                                                                else if(eventType == MemoryCallbackType.Read)
-                                                                {
-                                                                    Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventIdx: {eventIdx}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
-                                                                    byte newByte = 0;
-
-                                                                    MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
-                                                                    if (InstantWriteMap.ContainsKey(domain) && InstantWriteMap[domain].ContainsKey(domainAddress))
-                                                                    {
-                                                                        newByte = InstantWriteMap[domain][domainAddress];
-
-                                                                        if (eventBits != null && eventBits.Length > 0)
-                                                                        {
-                                                                            byte oldByte = domain!.PeekByte(domainAddress);
-                                                                            Console.WriteLine($"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
-
-                                                                            var inputBits = new BitArray(new byte[] { newByte });
-                                                                            var outputBits = new BitArray(new byte[] { oldByte });
-
-                                                                            foreach (var x in eventBits)
-                                                                            {
-                                                                                outputBits[x] = inputBits[x];
-                                                                            }
-                                                                            byte[] newByteContainer = new byte[1];
-                                                                            outputBits.CopyTo(newByteContainer, 0);
-                                                                            newByte = newByteContainer[0];
-                                                                        }
-                                                                        Console.WriteLine($"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
-                                                                        domain!.PokeByte(domainAddress, newByte);
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    return;
-                                                }
-                                            ),
-                                            Convert.ToUInt32(domainAddress),
-                                            null));
-                }
-            }
-            // setup hard soft.
-            foreach (var x in eventAddressLookups)
-            {
-                 if ((x.EventType & EventType.EventType_HardReset) != 0)
-                 {
-                     HardReset = new HardResetCallbackDelegate(() =>
-                     {
-                         Console.Out.WriteLine($"_hardreset");
-                         return;
-                     });
-                 }
-                 if ((x.EventType & EventType.EventType_SoftReset) != 0)
-                 {
-                     SoftReset = new SoftResetCallbackDelegate(() =>
-                     {
-                         Console.Out.WriteLine($"_softreset");
-                         return;
-                     });
-                 }
-            }
-            GameHookEventsLookup_Accessor?.Write(0, (byte)0);
         }
-        GameHookEvents_eventsSemaphore.Release();
     }
 
     private void WriteData()
@@ -594,6 +633,21 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             MainLabel.Text = $"Sending {System} data to GameHook...";
         }
 
+        scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
+        if (Platform != null)
+        {
+            foreach (var i in Platform.MemoryLayout)
+            {
+                if (!scopeToEntry.ContainsKey(i.BizhawkAlternateIdentifier))
+                    scopeToEntry.Add(i.BizhawkAlternateIdentifier, i);
+                if (!scopeToEntry.ContainsKey(i.BizhawkIdentifier))
+                    scopeToEntry.Add(i.BizhawkIdentifier, i);
+            }
+        }
+        GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
+        GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+        eventOperationsQueue = new();
+
         if (BoardInfo != null && BoardInfo.BoardName != null && Platform != null &&
             Platform.GetMapper != null)
         {
@@ -615,11 +669,13 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 mapper.InitState?.Invoke(mapper, Platform);
                 mapper.InitMapperDetection?.Invoke();
             }
+
+            Mapper = Platform.GetMapper(Platform, Emulator, MemoryDomains, Debuggable, BoardInfo?.BoardName);
         }
 
         if (Debuggable != null && Debuggable.MemoryCallbacksAvailable())
         {
-            SyncEvents();
+            Debuggable?.MemoryCallbacks?.Clear();
         }
     }
 
@@ -628,6 +684,16 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         if (MemoryDomains == null)
         {
             return;
+        }
+
+        lock (GameHook_EventLock)
+        {
+            PipeBase<EventOperation>.PipeReadArgs e;
+            while(eventOperationsQueue.Count > 0)
+            {
+                e = eventOperationsQueue.Dequeue();
+                ProcessEventOperation(e);
+            }
         }
 
         if (APIs!.Joypad != null)
@@ -685,11 +751,6 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 FrameSkip -= 1;
 
                 if (FrameSkip != 0) { return; }
-            }
-
-            if (Debuggable != null && Debuggable.MemoryCallbacksAvailable())
-            {
-                SyncEvents();
             }
 
             WriteData();

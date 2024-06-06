@@ -2,12 +2,8 @@
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class UnsignedIntegerProperty : GameHookProperty, IGameHookProperty
+    public class UnsignedIntegerProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables), IGameHookProperty
     {
-        public UnsignedIntegerProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
-        {
-        }
-
         protected override byte[] FromValue(string value)
         {
             if (Instance.PlatformOptions == null) throw new Exception("Instance.PlatformOptions is NULL.");

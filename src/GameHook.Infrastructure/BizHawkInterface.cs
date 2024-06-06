@@ -1,396 +1,436 @@
-﻿using GameHook.Domain.Interfaces;
-using System;
-using System.Collections.Generic;
-using System.IO.Pipes;
-using System.Linq;
+﻿using GameHook.Domain;
+using GameHook.Domain.Interfaces;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading.Tasks;
-using static GameHook.Infrastructure.BizHawkInterface;
 
 namespace GameHook.Infrastructure
 {
+    public static class ByteOperators
+    {
+        public static T[][] Split<T>(this T[] data, T[] splitBy)
+        {
+            ArgumentNullException.ThrowIfNull(data);
+            ArgumentNullException.ThrowIfNull(splitBy);
+
+            int[] indecies = data.Select((x, idx) => new { val = x, index = idx }).Where(x => splitBy.Any(y => y != null && y.Equals(x.val))).Select(x => x.index).ToArray();
+            ArraySegment<T>[] segments;
+            if(indecies.Length > 0 && indecies.Last() < data.Length - 1)
+            {
+                segments = indecies.Select((x, idx) => (idx == 0) ? new ArraySegment<T>(data, 0, x) : new ArraySegment<T>(data, indecies[idx - 1] + 1, x - indecies[idx - 1] - 1)).Append(new ArraySegment<T>(data, indecies[^1] + 1, data.Length - indecies[^1] - 1)).ToArray();
+            }
+            else if(indecies.Length == 0)
+            {
+                segments = [ new ArraySegment<T>(data) ];
+            }
+            else
+            {
+                segments = indecies.Select((x, idx) => (idx == 0) ? new ArraySegment<T>(data, 0, x) : new ArraySegment<T>(data, indecies[idx - 1] + 1, x - indecies[idx - 1] - 1)).ToArray();
+            }
+            
+            return segments.Select(x => x.Array ?? throw new NullReferenceException()).ToArray();
+        }
+    }
     internal static class BizHawkInterface
     {
-        public class CircularArrayQueue<T> where T : struct
+        public struct EventAddressRegisterOverride(string registerName, ulong value) : ISerializable
         {
-            private readonly T[] _array;
-            private int _front;
-            private int _rear;
-            private readonly int _capacity;
-
-            public CircularArrayQueue(int capacity)
-            {
-                _array = new T[capacity];
-                _front = -1;
-                _rear = -1;
-                _capacity = capacity;
-            }
-            public CircularArrayQueue(T[] array, int startIdx, int endIdx)
-            {
-                _array = array;
-                _front = startIdx;
-                _rear = endIdx;
-                _capacity = array.Length;
-            }
-
-            public bool Enqueue(T value)
-            {
-                if ((_rear + 1) % _capacity == _front)
-                {
-                    return false;
-                }
-                else if (_front == -1)
-                {
-                    _front = 0;
-                    _rear = 0;
-                    _array[_rear] = value;
-                    return true;
-                }
-                else
-                {
-                    _rear = (_rear + 1) % _capacity;
-                    _array[_rear] = value;
-                    return true;
-                }
-            }
-
-            public T? Dequeue()
-            {
-                if (_front == -1)
-                {
-                    return null;
-                }
-                else
-                {
-                    T ret = _array[_front];
-                    if (_front == _rear)
-                    {
-                        _front = -1;
-                        _rear = -1;
-                    }
-                    else
-                    {
-                        _front = (_front + 1) % _capacity;
-                    }
-                    return ret;
-                }
-            }
-
-            public int Front { get { return _front; } }
-            public int Rear { get { return _rear; } }
-            public T[] Array { get { return _array; } }
-        }
-
-        [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public struct EventAddressRegisterOverride
-        {
-            public ulong Register; // actually an 8 byte ascii string
-            public ulong Value;
+            public string Register = registerName ?? throw new ArgumentNullException(nameof(registerName)); // actually an 8 byte ascii string
+            public ulong Value = value;
 
             public EventAddressRegisterOverride() : this("", 0x00)
             {
             }
-            public EventAddressRegisterOverride(string registerName, ulong value)
+
+            public readonly byte[] Serialize()
             {
-                if (registerName == null)
-                {
-                    throw new ArgumentNullException(nameof(registerName));
-                }
-                // string needs to be same size as Register (ulong)
-                //
-                // TODO: a fixed size char array would work better, but I would require
-                // adding unsafe and I'm not sure if this would break BizHawk or cause
-                // build headaches.
-                else if (registerName.Length < 0 || registerName.Length > sizeof(ulong) - 1)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(registerName));
-                }
-                // encode as ASCII, don't need custom check as c# throws an exception for
-                // trying to encode non-ascii strings as ascii.
-                else
-                {
-                    List<byte> bytes = new(Encoding.ASCII.GetBytes(registerName));
-                    bytes ??= [];
-                    while (bytes.Count < sizeof(ulong))
-                    {
-                        bytes.Add(0);
-                    }
-                    Register = BitConverter.ToUInt64([.. bytes], 0);
-                }
-                Value = value;
+                byte[] registerBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(Encoding.UTF8.GetBytes(Register)));
+                byte[] valueBytesNonBase64 = BitConverter.GetBytes(Value);
+                if(!BitConverter.IsLittleEndian)
+                    Array.Reverse(valueBytesNonBase64);
+                byte[] valueBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(valueBytesNonBase64));
+                byte[] res = [.. registerBytes, .. new byte[1] { 0 }, .. valueBytes];
+                byte[] resLengthNonBase64 = BitConverter.GetBytes(res.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(resLengthNonBase64);
+                byte[] resLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(resLengthNonBase64));
+                return [.. resLength, .. new byte[1] { 0 }, .. res, .. new byte[1] { 0 }];
             }
 
-            public readonly string GetRegisterString()
+            public static EventAddressRegisterOverride Deserialize(byte[] bytes)
             {
-                byte[] bytes = BitConverter.GetBytes(Register);
-                string register = Encoding.ASCII.GetString(bytes);
-                register = register.TrimEnd('\0');
-
-                return register;
+                if (bytes == null)
+                    throw new ArgumentNullException(nameof(bytes));
+                else if (bytes.Length < sizeof(int))
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else if (bytes.Where(b => b == 0).Count() != 3)
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else
+                {
+                    byte[][] segments = bytes.Split([ (byte)0 ]);
+                    if(segments.Length != 3)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] lengthBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[0]));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(lengthBytes);
+                    int length = BitConverter.ToInt32(lengthBytes, 0);
+                    if(length != segments[1].Length + 1 + segments[2].Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    string registerName = Encoding.UTF8.GetString(Convert.FromBase64String(Encoding.ASCII.GetString(segments[1])));
+                    byte[] valueBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[2]));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(valueBytes);
+                    ulong value = BitConverter.ToUInt64(valueBytes, 0);
+                    return new EventAddressRegisterOverride(registerName, value);
+                }
+                throw new NotImplementedException();
             }
         }
 
-        [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public struct EventAddress
+        public class EventAddress(string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size, bool instantaneous) : ISerializable
         {
-            const int MaxRegisterOverride = 6;
-            const int MaxBitsLength = 64 * 8 / 8;
-            const int MaxNameLength = 64 * 16 / 8;
-
-            public bool Active;
-            public long Address;
-            public ushort Bank;
-            public EventType EventType;
-            public EventAddressRegisterOverride EventAddressRegisterOverride0;
-            public EventAddressRegisterOverride EventAddressRegisterOverride1;
-            public EventAddressRegisterOverride EventAddressRegisterOverride2;
-            public EventAddressRegisterOverride EventAddressRegisterOverride3;
-            public EventAddressRegisterOverride EventAddressRegisterOverride4;
-            public EventAddressRegisterOverride EventAddressRegisterOverride5;
-            public ulong Bits0;
-            public ulong Bits1;
-            public ulong Bits2;
-            public ulong Bits3;
-            public ulong Bits4;
-            public ulong Bits5;
-            public ulong Bits6;
-            public ulong Bits7;
-            public int Length;
-            public int Size;
-            public ulong Name0;
-            public ulong Name1;
-            public ulong Name2;
-            public ulong Name3;
-            public ulong Name4;
-            public ulong Name5;
-            public ulong Name6;
-            public ulong Name7;
-            public ulong Name8;
-            public ulong Name9;
-            public ulong Name10;
-            public ulong Name11;
-            public ulong Name12;
-            public ulong Name13;
-            public ulong Name14;
-            public ulong Name15;
-            public bool Instantaneous;
+            public bool Active = active;
+            public long Address = address;
+            public ushort Bank = bank;
+            public EventType EventType = eventType;
+            public EventAddressRegisterOverride[] EventAddressRegisterOverrides = eventAddressRegisterOverrides?.ToArray() ?? [];
+            public string Bits = bits ?? "";
+            public int Length = length;
+            public int Size = (size > 0) ? size : 1;
+            public string Name = name ?? "";
+            public bool Instantaneous = instantaneous;
 
             public EventAddress() : this(null, false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0, false)
             {
             }
-            public EventAddress(string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size, bool instantaneous)
-            {
-                Name0 = 0;
-                Name1 = 0;
-                Name2 = 0;
-                Name3 = 0;
-                Name4 = 0;
-                Name5 = 0;
-                Name6 = 0;
-                Name7 = 0;
-                Name8 = 0;
-                Name9 = 0;
-                Name10 = 0;
-                Name11 = 0;
-                Name12 = 0;
-                Name13 = 0;
-                Name14 = 0;
-                Name15 = 0;
-                EventAddressRegisterOverride0 = new EventAddressRegisterOverride();
-                EventAddressRegisterOverride1 = new EventAddressRegisterOverride();
-                EventAddressRegisterOverride2 = new EventAddressRegisterOverride();
-                EventAddressRegisterOverride3 = new EventAddressRegisterOverride();
-                EventAddressRegisterOverride4 = new EventAddressRegisterOverride();
-                EventAddressRegisterOverride5 = new EventAddressRegisterOverride();
-                Bits0 = 0;
-                Bits1 = 0;
-                Bits2 = 0;
-                Bits3 = 0;
-                Bits4 = 0;
-                Bits5 = 0;
-                Bits6 = 0;
-                Bits7 = 0;
-                Length = length;
-                Size = (size > 0) ? size : 1;
-                Instantaneous = instantaneous;
 
-                if (name == null)
-                {
-                    // noop, bits is already initialized to 0
-                }
-                else if (name.Length < 0 || name.Length > MaxNameLength)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(name));
-                }
+            public byte[] Serialize()
+            {
+                byte[] activeBytes = BitConverter.GetBytes(Active);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(activeBytes);
+                activeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(activeBytes));
+                byte[] addressBytes = BitConverter.GetBytes(Address);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(addressBytes);
+                addressBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(addressBytes));
+                byte[] bankBytes = BitConverter.GetBytes(Bank);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bankBytes);
+                bankBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(bankBytes));
+                byte[] eventTypeBytes = BitConverter.GetBytes(Convert.ToInt32(EventType));
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(eventTypeBytes);
+                eventTypeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventTypeBytes));
+                byte[] eventAddressRegisterOverridesLengthBytes = BitConverter.GetBytes(EventAddressRegisterOverrides.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(eventAddressRegisterOverridesLengthBytes);
+                string eventAddressRegisterOverridesLengthString = Convert.ToBase64String(eventAddressRegisterOverridesLengthBytes);
+                IEnumerable<string> eventAddressRegisterOverridesStrings = EventAddressRegisterOverrides.Select(x => Convert.ToBase64String(x.Serialize()));
+                eventAddressRegisterOverridesStrings = new string[1] { eventAddressRegisterOverridesLengthString }.Concat(eventAddressRegisterOverridesStrings);
+                byte[] eventAddressRegisterOverridesBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(Encoding.ASCII.GetBytes(string.Join("\0", eventAddressRegisterOverridesStrings.ToArray()))));
+                byte[] bitsBytes = Encoding.UTF8.GetBytes(Bits);
+                bitsBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(bitsBytes));
+                byte[] lengthBytes = BitConverter.GetBytes(Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(lengthBytes);
+                lengthBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(lengthBytes));
+                byte[] sizeBytes = BitConverter.GetBytes(Size);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(sizeBytes);
+                sizeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(sizeBytes));
+                byte[] nameBytes = UTF8Encoding.UTF8.GetBytes(Name);
+                nameBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(nameBytes));
+                byte[] instantaneousBytes = BitConverter.GetBytes(Instantaneous);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(instantaneousBytes);
+                instantaneousBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(instantaneousBytes));
+
+                byte[] res =
+                [
+                    .. activeBytes,
+                    .. new byte[1] { 0 },
+                    .. addressBytes,
+                    .. new byte[1] { 0 },
+                    .. bankBytes,
+                    .. new byte[1] { 0 },
+                    .. eventTypeBytes,
+                    .. new byte[1] { 0 },
+                    .. eventAddressRegisterOverridesBytes,
+                    .. new byte[1] { 0 },
+                    .. bitsBytes,
+                    .. new byte[1] { 0 },
+                    .. lengthBytes,
+                    .. new byte[1] { 0 },
+                    .. sizeBytes,
+                    .. new byte[1] { 0 },
+                    .. nameBytes,
+                    .. new byte[1] { 0 },
+                    .. instantaneousBytes,
+                ];
+                byte[] resLengthNonBase64 = BitConverter.GetBytes(res.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(resLengthNonBase64);
+                byte[] resLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(resLengthNonBase64));
+                return [.. resLength, .. new byte[1] { 0 }, .. res, .. new byte[1] { 0 }];
+            }
+
+            public static EventAddress Deserialize(byte[] bytes)
+            {
+                if (bytes == null)
+                    throw new ArgumentNullException(nameof(bytes));
+                else if (bytes.Length < sizeof(int))
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else if (bytes.Where(b => b == 0).Count() != 11)
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
                 else
                 {
-                    // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                    // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                    // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                    // attribute can be used to bypass.
-                    List<byte> nameBytes = new(Encoding.UTF8.GetBytes(name));
-                    nameBytes ??= [];
-                    while (nameBytes.Count < MaxNameLength)
+                    byte[][] segments = bytes.Split([(byte)0]);
+                    if (segments.Length != 11)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] lenBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[0]));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(lenBytes);
+                    int strLength = BitConverter.ToInt32(lenBytes, 0);
+                    if (strLength != segments[1].Length + 1
+                        + segments[2].Length + 1
+                        + segments[3].Length + 1
+                        + segments[4].Length + 1
+                        + segments[5].Length + 1
+                        + segments[6].Length + 1
+                        + segments[7].Length + 1
+                        + segments[8].Length + 1
+                        + segments[9].Length + 1
+                        + segments[10].Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    byte[] activeBytes = segments[1];
+                    byte[] addressBytes = segments[2];
+                    byte[] bankBytes = segments[3];
+                    byte[] eventTypeBytes = segments[4];
+                    byte[] eventAddressRegisterOverridesBytes = segments[5];
+                    byte[] bitsBytes = segments[6];
+                    byte[] lengthBytes = segments[7];
+                    byte[] sizeBytes = segments[8];
+                    byte[] nameBytes = segments[9];
+                    byte[] instantaneousBytes = segments[10];
+
+                    activeBytes = Convert.FromBase64String(Encoding.ASCII.GetString(activeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(activeBytes);
+                    bool active = BitConverter.ToBoolean(activeBytes, 0);
+
+                    addressBytes = Convert.FromBase64String(Encoding.ASCII.GetString(addressBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(addressBytes);
+                    long address = BitConverter.ToInt64(addressBytes, 0);
+
+                    bankBytes = Convert.FromBase64String(Encoding.ASCII.GetString(bankBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(bankBytes);
+                    ushort bank = BitConverter.ToUInt16(bankBytes, 0);
+
+                    eventTypeBytes = Convert.FromBase64String(Encoding.ASCII.GetString(eventTypeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(eventTypeBytes);
+                    int eventTypeInt = BitConverter.ToInt32(eventTypeBytes, 0);
+                    EventType eventType = (EventType)Enum.ToObject(typeof(EventType), eventTypeInt);
+
+                    eventAddressRegisterOverridesBytes = Convert.FromBase64String(Encoding.ASCII.GetString(eventAddressRegisterOverridesBytes));
+                    string[] eventAddressRegisterOverridesStrings = Encoding.ASCII.GetString(eventAddressRegisterOverridesBytes).Split('\0');
+                    if (eventAddressRegisterOverridesStrings.Length == 0)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] eventAddressRegisterOverridesLengthBytes = Convert.FromBase64String(eventAddressRegisterOverridesStrings[0]);
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(eventAddressRegisterOverridesLengthBytes);
+                    int eventAddressRegisterOverridesLength = BitConverter.ToInt32(eventAddressRegisterOverridesLengthBytes, 0);
+
+                    EventAddressRegisterOverride[] eventAddressRegisterOverrides;
+                    if (eventAddressRegisterOverridesLength == 0 && eventAddressRegisterOverridesStrings.Length > 0)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    else
                     {
-                        nameBytes.Add(0);
+                        int compLength = eventAddressRegisterOverridesStrings.Length - 1;
+                        if (compLength != eventAddressRegisterOverridesLength)
+                            throw new ArgumentOutOfRangeException(nameof(bytes));
+                        eventAddressRegisterOverrides = eventAddressRegisterOverridesStrings.Skip(1).Select(x => EventAddressRegisterOverride.Deserialize(Convert.FromBase64String(x))).ToArray();
                     }
-                    byte[] nameBytsArray = [.. nameBytes];
-                    Name0 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 0).Take(sizeof(ulong)).ToArray(), 0);
-                    Name1 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 1).Take(sizeof(ulong)).ToArray(), 0);
-                    Name2 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 2).Take(sizeof(ulong)).ToArray(), 0);
-                    Name3 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 3).Take(sizeof(ulong)).ToArray(), 0);
-                    Name4 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 4).Take(sizeof(ulong)).ToArray(), 0);
-                    Name5 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 5).Take(sizeof(ulong)).ToArray(), 0);
-                    Name6 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 6).Take(sizeof(ulong)).ToArray(), 0);
-                    Name7 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 7).Take(sizeof(ulong)).ToArray(), 0);
-                    Name8 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 8).Take(sizeof(ulong)).ToArray(), 0);
-                    Name9 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 9).Take(sizeof(ulong)).ToArray(), 0);
-                    Name10 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 10).Take(sizeof(ulong)).ToArray(), 0);
-                    Name11 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 11).Take(sizeof(ulong)).ToArray(), 0);
-                    Name12 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 12).Take(sizeof(ulong)).ToArray(), 0);
-                    Name13 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 13).Take(sizeof(ulong)).ToArray(), 0);
-                    Name14 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 14).Take(sizeof(ulong)).ToArray(), 0);
-                    Name15 = BitConverter.ToUInt64(nameBytsArray.Skip(sizeof(ulong) * 15).Take(sizeof(ulong)).ToArray(), 0);
+
+                    bitsBytes = Convert.FromBase64String(Encoding.ASCII.GetString(bitsBytes));
+                    string bits = Encoding.UTF8.GetString(bitsBytes);
+
+                    lengthBytes = Convert.FromBase64String(Encoding.ASCII.GetString(lengthBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(lengthBytes);
+                    int length = BitConverter.ToInt32(lengthBytes, 0);
+
+                    sizeBytes = Convert.FromBase64String(Encoding.ASCII.GetString(sizeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(sizeBytes);
+                    int size = BitConverter.ToInt32(sizeBytes, 0);
+
+                    nameBytes = Convert.FromBase64String(Encoding.ASCII.GetString(nameBytes));
+                    string name = Encoding.UTF8.GetString(nameBytes);
+
+                    instantaneousBytes = Convert.FromBase64String(Encoding.ASCII.GetString(instantaneousBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(instantaneousBytes);
+                    bool instantaneous = BitConverter.ToBoolean(instantaneousBytes, 0);
+
+                    return new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides, bits, length, size, instantaneous);
                 }
-                Active = active;
-                Address = address;
-                Bank = bank;
-                EventType = eventType;
-                if (eventAddressRegisterOverrides == null)
+                throw new NotImplementedException();
+            }
+        }
+
+        public enum EventOperationType
+        {
+            EventOperationType_Undefined = 0,
+            EventOperationType_Clear = 1,
+            EventOperationType_Add = 2,
+            EventOperationType_Remove = 3,
+        }
+        public class EventOperation(EventOperationType opType, EventType eventType, ulong? eventSerial, EventAddress? eventAddress) : ISerializable
+        {
+            private readonly EventOperationType _opType = opType;
+            private readonly ulong? _eventSerial = eventSerial;
+            private readonly EventAddress? _eventAddress = eventAddress;
+            private readonly EventType _eventType = eventType;
+
+            public byte[] Serialize()
+            {
+                int opTypeInt = Convert.ToInt32(_opType);
+                byte[] opTypeBytes = BitConverter.GetBytes(opTypeInt);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(opTypeBytes);
+                opTypeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(opTypeBytes));
+
+                byte[] eventTypeBytes = BitConverter.GetBytes(Convert.ToInt32(_eventType));
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(eventTypeBytes);
+                eventTypeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventTypeBytes));
+
+                byte[] eventSerialBytes = BitConverter.GetBytes(_eventSerial ?? 0);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(eventSerialBytes);
+                eventSerialBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventSerialBytes));
+
+                byte[] eventAddressBytes = [];
+                if (_eventAddress != null)
                 {
-                    throw new ArgumentNullException(nameof(eventAddressRegisterOverrides));
+                    eventAddressBytes = _eventAddress.Serialize();
                 }
-                else if (eventAddressRegisterOverrides.Count() < 0 || eventAddressRegisterOverrides.Count() > MaxRegisterOverride)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(eventAddressRegisterOverrides));
-                }
+                eventAddressBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventAddressBytes));
+
+                int eventAddressBytesLength = eventAddressBytes.Length;
+                byte[] eventAddressBytesLengthByte = BitConverter.GetBytes(eventAddressBytesLength);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(eventAddressBytesLengthByte);
+                eventAddressBytesLengthByte = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventAddressBytesLengthByte));
+
+                byte[] res = [.. opTypeBytes, .. new byte[1] { 0 },
+                    .. eventTypeBytes, .. new byte[1] { 0 },
+                    .. eventSerialBytes, .. new byte[1] { 0 },
+                    .. eventAddressBytesLengthByte, .. new byte[1] { 0 }, 
+                    .. eventAddressBytes];
+                byte[] resLengthNonBase64 = BitConverter.GetBytes(res.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(resLengthNonBase64);
+                byte[] resLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(resLengthNonBase64));
+                return [.. resLength, .. new byte[1] { 0 }, .. res, .. new byte[1] { 0 }];
+            }
+
+            public static EventOperation Deserialize(byte[] bytes)
+            {
+                if (bytes == null)
+                    throw new ArgumentNullException(nameof(bytes));
+                else if (bytes.Length < sizeof(int))
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else if (bytes.Where(b => b == 0).Count() != 6)
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
                 else
                 {
-                    int idx = 0;
-                    // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                    // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                    // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                    // attribute can be used to bypass.
-                    foreach (EventAddressRegisterOverride eventAddressRegisterOverride in eventAddressRegisterOverrides)
-                    {
-                        switch (idx)
-                        {
-                            case 0:
-                                EventAddressRegisterOverride0 = eventAddressRegisterOverride;
-                                break;
-                            case 1:
-                                EventAddressRegisterOverride1 = eventAddressRegisterOverride;
-                                break;
-                            case 2:
-                                EventAddressRegisterOverride2 = eventAddressRegisterOverride;
-                                break;
-                            case 3:
-                                EventAddressRegisterOverride3 = eventAddressRegisterOverride;
-                                break;
-                            case 4:
-                                EventAddressRegisterOverride4 = eventAddressRegisterOverride;
-                                break;
-                            case 5:
-                                EventAddressRegisterOverride5 = eventAddressRegisterOverride;
-                                break;
-                            default:
-                                throw new Exception("unexpected index");
-                        }
-                        idx++;
-                    }
-                }
-                if (bits == null)
-                {
-                    // noop, bits is already initialized to 0
-                }
-                else if (bits.Length < 0 || bits.Length > MaxBitsLength)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(bits));
-                }
-                else
-                {
-                    // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                    // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                    // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                    // attribute can be used to bypass.
-                    List<byte> bitsBytes = new(Encoding.ASCII.GetBytes(bits));
-                    bitsBytes ??= [];
-                    while (bitsBytes.Count < MaxBitsLength)
-                    {
-                        bitsBytes.Add(0);
-                    }
-                    byte[] bitsBytsArray = [.. bitsBytes];
-                    Bits0 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 0).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits1 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 1).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits2 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 2).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits3 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 3).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits4 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 4).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits5 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 5).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits6 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 6).Take(sizeof(ulong)).ToArray(), 0);
-                    Bits7 = BitConverter.ToUInt64(bitsBytsArray.Skip(sizeof(ulong) * 7).Take(sizeof(ulong)).ToArray(), 0);
+                    byte[][] segments = bytes.Split([(byte)0]);
+                    if (segments.Length != 6)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] lenBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[0]));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(lenBytes);
+                    int strLength = BitConverter.ToInt32(lenBytes, 0);
+                    if (strLength != segments[1].Length + 1
+                        + segments[2].Length + 1
+                        + segments[3].Length + 1
+                        + segments[4].Length + 1
+                        + segments[5].Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    byte[] opTypeBytes = segments[1];
+                    byte[] eventTypeBytes = segments[2];
+                    byte[] eventSerialBytes = segments[3];
+                    byte[] eventAddressBytesLengthByte = segments[4];
+                    byte[] eventAddressBytes = segments[5];
+
+                    opTypeBytes = Convert.FromBase64String(ASCIIEncoding.ASCII.GetString(opTypeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(opTypeBytes);
+                    int opTypeInt = BitConverter.ToInt32(opTypeBytes, 0);
+                    EventOperationType eventOperationType = (EventOperationType)Enum.ToObject(typeof(EventOperationType), opTypeInt);
+
+                    eventTypeBytes = Convert.FromBase64String(ASCIIEncoding.ASCII.GetString(eventTypeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(eventTypeBytes);
+                    int eventTypeInt = BitConverter.ToInt32(eventTypeBytes, 0);
+                    EventType eventType = (EventType)Enum.ToObject(typeof(EventType), eventTypeInt);
+
+                    eventSerialBytes = Convert.FromBase64String(Encoding.ASCII.GetString(eventSerialBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(eventSerialBytes);
+                    ulong eventSerialULong = BitConverter.ToUInt64(eventSerialBytes, 0);
+                    ulong? eventSerial = (eventSerialULong == 0) ? null : eventSerialULong;
+
+                    eventAddressBytesLengthByte = Convert.FromBase64String(Encoding.ASCII.GetString(eventAddressBytesLengthByte));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(eventAddressBytesLengthByte);
+                    int eventAddressBytesLength = BitConverter.ToInt32(eventAddressBytesLengthByte, 0);
+
+                    if (eventAddressBytesLength != eventAddressBytes.Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    eventAddressBytes = Convert.FromBase64String(Encoding.ASCII.GetString(eventAddressBytes));
+                    EventAddress? eventAddress = (eventAddressBytes.Length > 0) ? EventAddress.Deserialize(eventAddressBytes) : null;
+
+                    return new EventOperation(eventOperationType, eventType, eventSerial, eventAddress);
                 }
             }
 
-            public readonly EventAddressRegisterOverride[] GetOverrides()
+            public EventOperationType OpType
             {
-                List<EventAddressRegisterOverride> overrides = [];
-                foreach (var i in new List<EventAddressRegisterOverride> {EventAddressRegisterOverride0,
-                        EventAddressRegisterOverride1,
-                        EventAddressRegisterOverride2,
-                        EventAddressRegisterOverride3,
-                        EventAddressRegisterOverride4,
-                        EventAddressRegisterOverride5})
+                get
                 {
-                    if ((i.Register & 0xFFUL) != 0)
-                    {
-                        overrides.Add(i);
-                    }
+                    return _opType;
                 }
-
-                return [.. overrides];
+            }
+            public ulong? EventSerial
+            {
+                get
+                {
+                    return _eventSerial;
+                }
+            }
+            public EventAddress? EventAddress
+            {
+                get
+                {
+                    return _eventAddress;
+                }
             }
 
-            public readonly string GetBitsString()
+            public EventType EventType
             {
-                IEnumerable<byte> bytes = BitConverter.GetBytes(Bits0).ToList();
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits1).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits2).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits3).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits4).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits5).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits6).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Bits7).ToList());
-
-                string bits = Encoding.ASCII.GetString(bytes.ToArray());
-                bits = bits.TrimEnd('\0');
-
-                return bits;
-            }
-
-            public readonly string GetNameString()
-            {
-                IEnumerable<byte> bytes = BitConverter.GetBytes(Name0).ToList();
-                bytes = bytes.Concat(BitConverter.GetBytes(Name1).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name2).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name3).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name4).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name5).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name6).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name7).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name8).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name9).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name10).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name11).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name12).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name13).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name14).ToList());
-                bytes = bytes.Concat(BitConverter.GetBytes(Name15).ToList());
-
-                string name = Encoding.UTF8.GetString(bytes.ToArray());
-                name = name.TrimEnd('\0');
-
-                return name;
+                get
+                {
+                    return EventType;
+                }
             }
         }
 

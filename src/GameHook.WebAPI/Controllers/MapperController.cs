@@ -112,7 +112,7 @@ namespace GameHook.WebAPI.Controllers
     public class UpdatePropertyBytesModel
     {
         public string Path { get; init; } = string.Empty;
-        public int[] Bytes { get; init; } = Array.Empty<int>();
+        public int[] Bytes { get; init; } = [];
         public bool? Freeze { get; init; }
     }
 
@@ -126,35 +126,22 @@ namespace GameHook.WebAPI.Controllers
     [Produces("application/json")]
     [Consumes("application/json")]
     [Route("mapper")]
-    public class MapperController : ControllerBase
+    public class MapperController(
+        ILogger<MapperController> logger,
+        GameHookInstance gameHookInstance,
+        AppSettings appSettings,
+        IBizhawkMemoryMapDriver bizhawkMemoryMapDriver,
+        IRetroArchUdpPollingDriver retroArchUdpPollingDriver,
+        IStaticMemoryDriver nullDriver,
+        IMapperUpdateManager mapperUpdateManager) : ControllerBase
     {
-        private readonly ILogger<MapperController> _logger;
-        public GameHookInstance Instance { get; }
-        private readonly AppSettings _appSettings;
-        public readonly IBizhawkMemoryMapDriver _bizhawkMemoryMapDriver;
-        public readonly IRetroArchUdpPollingDriver _retroArchUdpPollingDriver;
-        public readonly IStaticMemoryDriver _staticMemoryDriver;
-        private readonly IMapperUpdateManager _mapperUpdateManager;
-
-        public MapperController(
-            ILogger<MapperController> logger,
-            GameHookInstance gameHookInstance,
-            AppSettings appSettings,
-            IBizhawkMemoryMapDriver bizhawkMemoryMapDriver,
-            IRetroArchUdpPollingDriver retroArchUdpPollingDriver,
-            IStaticMemoryDriver nullDriver,
-            IMapperUpdateManager mapperUpdateManager)
-        {
-            _logger = logger;
-
-            Instance = gameHookInstance;
-
-            _appSettings = appSettings;
-            _bizhawkMemoryMapDriver = bizhawkMemoryMapDriver;
-            _retroArchUdpPollingDriver = retroArchUdpPollingDriver;
-            _staticMemoryDriver = nullDriver;
-            _mapperUpdateManager = mapperUpdateManager;
-        }
+        private readonly ILogger<MapperController> _logger = logger;
+        public GameHookInstance Instance { get; } = gameHookInstance;
+        private readonly AppSettings _appSettings = appSettings;
+        public readonly IBizhawkMemoryMapDriver _bizhawkMemoryMapDriver = bizhawkMemoryMapDriver;
+        public readonly IRetroArchUdpPollingDriver _retroArchUdpPollingDriver = retroArchUdpPollingDriver;
+        public readonly IStaticMemoryDriver _staticMemoryDriver = nullDriver;
+        private readonly IMapperUpdateManager _mapperUpdateManager = mapperUpdateManager;
 
         [HttpGet]
         [SwaggerOperation("Returns the mapper that was loaded, with all properties (populated with data).")]
@@ -352,7 +339,7 @@ namespace GameHook.WebAPI.Controllers
 
             if (model.Freeze)
             {
-                await prop.FreezeProperty(prop.Bytes ?? Array.Empty<byte>());
+                await prop.FreezeProperty(prop.Bytes ?? []);
             }
             else
             {

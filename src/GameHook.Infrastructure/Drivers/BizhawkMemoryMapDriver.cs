@@ -1,5 +1,6 @@
 ﻿using GameHook.Domain;
 using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -9,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml.Linq;
 using static GameHook.Infrastructure.BizHawkInterface;
+using static GameHook.Infrastructure.PipeBase<GameHook.Infrastructure.BizHawkInterface.EventOperation>;
 using static System.Net.Mime.MediaTypeNames;
 
 #pragma warning disable CA1416 // Validate platform compatibility
@@ -25,6 +27,7 @@ namespace GameHook.Infrastructure.Drivers
         private const int METADATA_LENGTH = 32;
         private const int DATA_Length = 4 * 1024 * 1024;
 
+        private ILogger<BizhawkMemoryMapDriver> Logger { get; }
         private readonly AppSettings _appSettings;
 
         private MemoryMappedFile? _metadataMemoryMappedFile = null;
@@ -33,22 +36,20 @@ namespace GameHook.Infrastructure.Drivers
         private MemoryMappedFile? _dataMemoryMappedFile = null;
         private MemoryMappedViewAccessor? _dataAccessor = null;
 
-        private MemoryMappedFile? _eventsLookupMemoryMappedFile = null;
-        private MemoryMappedViewAccessor? _eventsLookupAccessor = null;
-        private int _eventsLookupElementSize = 0;
-        private Semaphore? _eventsSemaphore = null;
-
         private MemoryMappedFile? _writeCallMemoryMappedFile = null;
         private MemoryMappedViewAccessor? _writeCallAccessor = null;
         private int _writeCallElementSize = 0;
         private Semaphore? _writeCallSemaphore = null;
 
         const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-        EventAddress[] eventsLookup = [];
-        Dictionary<long, int[]> addressEventsLookup = new();
+        IGameHookEvent[] eventsLookup = [];
+        Dictionary<long, IGameHookEvent[]> addressEventsLookup = [];
 
-        public BizhawkMemoryMapDriver(AppSettings appSettings)
+        PipeClient<EventOperation>? eventsPipe = null;
+
+        public BizhawkMemoryMapDriver(ILogger<BizhawkMemoryMapDriver> logger, AppSettings appSettings)
         {
+            Logger = logger;
             _appSettings = appSettings;
             DelayMsBetweenReads = _appSettings.BIZHAWK_DELAY_MS_BETWEEN_READS;
         }
@@ -86,25 +87,6 @@ namespace GameHook.Infrastructure.Drivers
                 _dataMemoryMappedFile = null;
             }
 
-            if (_eventsSemaphore != null)
-            {
-                _eventsSemaphore.Close();
-                _eventsSemaphore.Dispose();
-                _eventsSemaphore = null;
-            }
-
-            if (_eventsLookupAccessor != null)
-            {
-                _eventsLookupAccessor.Dispose();
-                _eventsLookupAccessor = null;
-            }
-
-            if (_eventsLookupMemoryMappedFile != null)
-            {
-                _eventsLookupMemoryMappedFile.Dispose();
-                _eventsLookupMemoryMappedFile = null;
-            }
-
             if (_writeCallSemaphore != null)
             {
                 _writeCallSemaphore.Close();
@@ -124,9 +106,8 @@ namespace GameHook.Infrastructure.Drivers
                 _writeCallMemoryMappedFile = null;
             }
 
-            eventsLookup = new EventAddress[eventsLookupSize];
-            EventAddress template = new();
-            Array.Fill(eventsLookup, template);
+            eventsLookup = new IGameHookEvent[eventsLookupSize];
+            addressEventsLookup = [];
 
             try
             {
@@ -174,12 +155,7 @@ namespace GameHook.Infrastructure.Drivers
 
             try
             {
-                int eventElementSize = Marshal.SizeOf(typeof(EventAddress));
-                _eventsLookupElementSize = 1 + eventElementSize * SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-                _eventsLookupMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_EVENTS_LOOKUPS.bin", MemoryMappedFileRights.Write);
-                _eventsLookupAccessor = _eventsLookupMemoryMappedFile.CreateViewAccessor(0, _eventsLookupElementSize, MemoryMappedFileAccess.Write);
-
-                _eventsSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
+                eventsPipe = new("GAMEHOOK_BIZHAWK_EVENTS.pipe", x => EventOperation.Deserialize(x));
             }
             catch (FileNotFoundException ex)
             {
@@ -209,6 +185,14 @@ namespace GameHook.Infrastructure.Drivers
             }
 
             return Task.CompletedTask;
+        }
+
+        void EventPipeConnectedHandler(object sender, PipeConnectedArgs e)
+        {
+        }
+
+        void EventReadHandler(object sender, PipeReadArgs e)
+        {
         }
 
         public Task<Dictionary<uint, byte[]>> ReadBytes(IEnumerable<MemoryAddressBlock> blocks)
@@ -251,8 +235,8 @@ namespace GameHook.Infrastructure.Drivers
                     _writeCallAccessor.Read(sizeof(int), out int rear);
                     _writeCallAccessor.ReadArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
 
-                    int[] eventIdx = (addressEventsLookup != null) ? (addressEventsLookup.ContainsKey(startingMemoryAddress) ? addressEventsLookup[startingMemoryAddress] : []) : [];
-                    bool frozen = eventIdx.Any(x => eventsLookup[x].Instantaneous);
+                    IGameHookEvent[] events = (addressEventsLookup != null) ? (addressEventsLookup.ContainsKey(startingMemoryAddress) ? addressEventsLookup[startingMemoryAddress] : []) : [];
+                    bool frozen = events.Any(x => x?.Property?.Instantaneous != null && x.Property.Instantaneous.Value);
 
                     // create the queue and enqueue the write
                     CircularArrayQueue <WriteCall> queue = new(writeCalls, front, rear);
@@ -296,30 +280,15 @@ namespace GameHook.Infrastructure.Drivers
 
         public Task ClearEvents()
         {
+            if(eventsPipe == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
             try
             {
-                _eventsSemaphore!.WaitOne();
-
-                try
-                {
-                    EventAddress template = new();
-                    Array.Fill(eventsLookup, template, 0, eventsLookup.Length);
-                    addressEventsLookup = new();
-                    _eventsLookupAccessor!.Write(0, (byte)1);
-                    _eventsLookupAccessor.WriteArray(1, eventsLookup, 0, eventsLookup.Length);
-                }
-                catch (FileNotFoundException ex)
-                {
-                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                }
-                catch
-                {
-                    throw;
-                }
-                finally
-                {
-                    _eventsSemaphore.Release();
-                }
+                eventsLookup = [];
+                addressEventsLookup = [];
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Clear, EventType.EventType_Undefined, null, null));
 
                 return Task.CompletedTask;
             }
@@ -333,89 +302,36 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
+        public Task AddEvent(EventType eventType, IGameHookEvent eventObj)
         {
+            if (eventsPipe == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            if (eventObj == null)
+            {
+                throw new NullReferenceException(nameof(eventObj));
+            }
             try
             {
-                _eventsSemaphore!.WaitOne();
-
-                try
+                List<EventAddressRegisterOverride> eventAddressRegisterOverrides = [];
+                foreach(var over in eventObj.EventRegisterOverrides)
                 {
-                    List<EventAddress> currentEvents = eventsLookup.Where(x => x.Active).ToList();
-                    if(currentEvents.Count >= eventsLookupSize)
-                    {
-                        throw new Exception("Too many events, please contact devs to get more added, or remove some events or instant properties.");
-                    }
-                    else
-                    {
-                        IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides;
-                        if (eventRegisterOverrides != null && eventRegisterOverrides.Length > 0)
-                        {
-                            eventAddressRegisterOverrides = eventRegisterOverrides.Select(x =>
-                            {
-                                if (x != null)
-                                {
-                                    if (x.Value != null && x.Register != null)
-                                    {
-                                        string? valueString = x.Value.ToString();
-                                        if (valueString != null)
-                                        {
-                                            return new EventAddressRegisterOverride(x.Register, ulong.Parse(valueString));
-                                        }
-                                        else
-                                        {
-                                            throw new NullReferenceException();
-                                        }
-                                    }
-                                    else
-                                    {
-                                        throw new NullReferenceException();
-                                    }
-                                }
-                                else
-                                {
-                                    throw new NullReferenceException();
-                                }
-                            });
-                        }
-                        else
-                        {
-                            eventAddressRegisterOverrides = new List<EventAddressRegisterOverride>();
-                        }
-
-                        EventAddress newAddress = new(name, true, address, bank, eventType, eventAddressRegisterOverrides.ToArray(), bits, length, size, instantaneous);
-                        currentEvents.Add(newAddress);
-
-                        if(currentEvents.Count < eventsLookupSize)
-                        {
-                            EventAddress template = new();
-
-                            while(currentEvents.Count < eventsLookupSize)
-                            {
-                                currentEvents.Add(template);
-                            }
-                        }
-                    }
-                    currentEvents.CopyTo(eventsLookup, 0);
-
-                    IEnumerable<long> keys = eventsLookup.Where(x => x.Active).DistinctBy(x => x.Address).Select(x => x.Address);
-                    addressEventsLookup = keys.ToDictionary(x => x, x => eventsLookup.Select((y, idx) => new Tuple<int, long, bool>(idx, y.Address, y.Active)).Where(y => y.Item3 && y.Item2 == x).Select(y => y.Item1).ToArray());
-
-                    _eventsLookupAccessor.Write(0, (byte)1);
-                    _eventsLookupAccessor.WriteArray(1, eventsLookup, 0, eventsLookup.Length);
+                    string registerValue = over?.Register ?? throw new NullReferenceException(nameof(over.Register));
+                    string overValue = over?.Value?.ToString() ?? throw new NullReferenceException(nameof(over.Value));
+                    eventAddressRegisterOverrides.Add(new EventAddressRegisterOverride(registerValue, ulong.Parse(overValue)));
                 }
-                catch (FileNotFoundException ex)
-                {
-                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                }
-                catch
-                {
-                    throw;
-                }
-                finally
-                {
-                    _eventsSemaphore.Release();
-                }
+                string? name = eventObj.Name;
+                bool active = true;
+                long address = (eventObj.Address != null) ? eventObj.Address.Value : 0;
+                ushort bank = (eventObj.Bank != null) ? eventObj.Bank.Value : ushort.MaxValue;
+                string? bits = eventObj.Bits;
+                int length = (eventObj.Length != null) ? eventObj.Length.Value : 0;
+                int size = eventObj.Size != null ? eventObj.Size.Value : 0;
+                bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
+                ulong serialNumber = eventObj?.SerialNumber ?? 0;
+
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Add, eventType, serialNumber, new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
 
                 return Task.CompletedTask;
             }
@@ -429,45 +345,36 @@ namespace GameHook.Infrastructure.Drivers
             }
         }
 
-        public Task RemoveEvent(long address, ushort bank, EventType eventType)
+        public Task RemoveEvent(EventType eventType, IGameHookEvent eventObj)
         {
+            if (eventsPipe == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            if(eventObj == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
             try
             {
-                _eventsSemaphore!.WaitOne();
-
-                try
+                List<EventAddressRegisterOverride> eventAddressRegisterOverrides = [];
+                foreach (var over in eventObj.EventRegisterOverrides)
                 {
-                    List<EventAddress> currentEvents = eventsLookup.Where(x => x.Active && (x.Address != address || x.EventType != eventType || x.Bank != bank)).ToList();
-
-                    if (currentEvents.Count < eventsLookupSize)
-                    {
-                        EventAddress template = new();
-
-                        while (currentEvents.Count < eventsLookupSize)
-                        {
-                            currentEvents.Add(template);
-                        }
-                    }
-                    currentEvents.CopyTo(eventsLookup, 0);
-
-                    IEnumerable<long> keys = eventsLookup.Where(x => x.Active).DistinctBy(x => x.Address).Select(x => x.Address);
-                    addressEventsLookup = keys.ToDictionary(x => x, x => eventsLookup.Select((y, idx) => new Tuple<int, long, bool>(idx, y.Address, y.Active)).Where(y => y.Item3 && y.Item2 == x).Select(y => y.Item1).ToArray());
-
-                    _eventsLookupAccessor.Write(0, (byte)1);
-                    _eventsLookupAccessor.WriteArray(1, currentEvents.ToArray(), 0, currentEvents.Count);
+                    string registerValue = over?.Register ?? throw new NullReferenceException(nameof(over.Register));
+                    string overValue = over?.Value?.ToString() ?? throw new NullReferenceException(nameof(over.Value));
+                    eventAddressRegisterOverrides.Add(new EventAddressRegisterOverride(registerValue, ulong.Parse(overValue)));
                 }
-                catch (FileNotFoundException ex)
-                {
-                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                }
-                catch
-                {
-                    throw;
-                }
-                finally
-                {
-                    _eventsSemaphore.Release();
-                }
+                string? name = eventObj.Name;
+                bool active = true;
+                long address = (eventObj.Address != null) ? eventObj.Address.Value : 0;
+                ushort bank = (eventObj.Bank != null) ? eventObj.Bank.Value : ushort.MaxValue;
+                string? bits = eventObj.Bits;
+                int length = (eventObj.Length != null) ? eventObj.Length.Value : 0;
+                int size = eventObj.Size != null ? eventObj.Size.Value : 0;
+                bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
+                ulong serialNumber = eventObj?.SerialNumber ?? 0;
+
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Remove, eventType, serialNumber, new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
 
                 return Task.CompletedTask;
             }

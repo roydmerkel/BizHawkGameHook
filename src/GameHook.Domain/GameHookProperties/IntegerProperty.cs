@@ -2,12 +2,8 @@
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class IntegerProperty : GameHookProperty
+    public class IntegerProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables)
     {
-        public IntegerProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
-        {
-        }
-
         protected override byte[] FromValue(string value)
         {
             if (Instance == null) throw new Exception("Instance is NULL.");

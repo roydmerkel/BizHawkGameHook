@@ -44,10 +44,7 @@ namespace GameHook.Domain.GameHookProperties
                 _addressString = value.ToString();
 
                 IsMemoryAddressSolved = true;
-                if (GameHookEvent != null)
-                {
-                    GameHookEvent.UpdateAddressFromProperty();
-                }
+                GameHookEvent?.UpdateAddressFromProperty();
 
                 FieldsChanged.Add("address");
             }
@@ -72,10 +69,7 @@ namespace GameHook.Domain.GameHookProperties
                 {
                     _address = solvedAddress;
                 }
-                if(GameHookEvent != null)
-                {
-                    GameHookEvent.UpdateAddressFromProperty();
-                }
+                GameHookEvent?.UpdateAddressFromProperty();
 
                 FieldsChanged.Add("address");
             }

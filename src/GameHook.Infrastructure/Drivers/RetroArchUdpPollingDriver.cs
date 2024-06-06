@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using static GameHook.Infrastructure.BizHawkInterface;
 
 namespace GameHook.Infrastructure.Drivers
 {
@@ -274,13 +275,13 @@ namespace GameHook.Infrastructure.Drivers
             return Task.CompletedTask;
         }
 
-        public Task AddEvent(string? name, long address, ushort bank, EventType eventType, EventRegisterOverride[] eventRegisterOverrides, string? bits, int length, int size, bool instantaneous)
+        public Task AddEvent(EventType eventType, IGameHookEvent eventObj)
         {
             Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
             return Task.CompletedTask;
         }
 
-        public Task RemoveEvent(long address, ushort bank, EventType eventType)
+        public Task RemoveEvent(EventType eventType, IGameHookEvent eventObj)
         {
             Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
             return Task.CompletedTask;

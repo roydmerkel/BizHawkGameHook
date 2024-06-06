@@ -40,19 +40,19 @@ namespace GameHook.Domain.GameHookEvents
                 IsMemoryAddressSolved = true;
                 if (_address == null && _oldAddress != null)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = _address;
                 }
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = _address;
-                    SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
 
                 FieldsChanged.Add("address");
@@ -81,19 +81,19 @@ namespace GameHook.Domain.GameHookEvents
 
                 if (_address == null && _oldAddress != null)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = _address;
                 }
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = _address;
-                    SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
 
                 FieldsChanged.Add("address");
@@ -125,7 +125,7 @@ namespace GameHook.Domain.GameHookEvents
                 {
                     if (_address != null)
                     {
-                        ClearEvent(_address.Value, (_oldBank != null) ? _oldBank.Value : ushort.MaxValue);
+                        ClearEvent(this);
                     }
                     _oldBank = _bank;
                 }
@@ -134,19 +134,19 @@ namespace GameHook.Domain.GameHookEvents
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                        SetEvent(this);
                     }
                 }
                 else if (_bank != null && _oldBank != null && _oldBank != _bank)
                 {
                     if (_address != null)
                     {
-                        ClearEvent(_address.Value, (_oldBank != null) ? _oldBank.Value : ushort.MaxValue);
+                        ClearEvent(this);
                     }
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(Name, _address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, _bits, _length ?? 1, _size ?? 0, Property?.Instantaneous ?? false);
+                        SetEvent(this);
                     }
                 }
 

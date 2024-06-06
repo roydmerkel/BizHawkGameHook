@@ -7,6 +7,9 @@ namespace GameHook.Domain.GameHookEvents
     {
         public GameHookEvent(IGameHookInstance instance, EventAttributes attributes)
         {
+            SerialNumber = _serialNumber;
+            _serialNumber++;
+
             Instance = instance;
             Name = attributes?.Name ?? "";
             EventType = attributes?.EventType ?? EventType.EventType_Undefined;
@@ -23,8 +26,11 @@ namespace GameHook.Domain.GameHookEvents
             AddressString = attributes?.Address; // setting address triggers event callback updates, so it should be set last.
         }
 
+        static ulong _serialNumber = 1;
+
+        public ulong SerialNumber { get; }
         protected IGameHookInstance Instance { get; }
-        public string Name { get; }
+        public string Name { get; set; }
         public EventType EventType { get; }
         public EventRegisterOverride[] EventRegisterOverrides { get; }
 
@@ -64,8 +70,8 @@ namespace GameHook.Domain.GameHookEvents
             Address = address;
         }
 
-        public abstract void ClearEvent(MemoryAddress address, ushort bank);
-        public abstract void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size, bool instantaneous);
+        public abstract void ClearEvent(IGameHookEvent ev);
+        public abstract void SetEvent(IGameHookEvent ev);
 
         public void UpdateAddressFromProperty()
         {
@@ -73,21 +79,26 @@ namespace GameHook.Domain.GameHookEvents
             {
                 if(Property.Address == null && _oldAddress != null)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = Property.Address;
                 } 
                 else if(Property.Address != null && _oldAddress == null)
                 {
                     _oldAddress = Property.Address;
-                    SetEvent(Name, Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
                 else if(Property.Address != null && _oldAddress != null && Property.Address.Value != _oldAddress.Value)
                 {
-                    ClearEvent(_oldAddress.Value, (_bank != null) ? _bank.Value : ushort.MaxValue);
+                    ClearEvent(this);
                     _oldAddress = Property.Address;
-                    SetEvent(Name, Property.Address.Value, (_bank != null) ? _bank.Value : ushort.MaxValue, Property.Bits, Property.Length ?? 1, Property.Size ?? 0, Property?.Instantaneous ?? false);
+                    SetEvent(this);
                 }
             }
+        }
+
+        public byte[] Serialize()
+        {
+            throw new NotImplementedException();
         }
     }
 }

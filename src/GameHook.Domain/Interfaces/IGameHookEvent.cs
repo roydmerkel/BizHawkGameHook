@@ -35,8 +35,10 @@
 
     public interface IGameHookEvent
     {
+        ulong SerialNumber { get; }
         string Name { get; }
         string? MemoryContainer { get; }
+        ushort? Bank { get; }
         uint? Address { get; }
         EventType EventType { get; }
         string? Description { get; set; }
@@ -48,8 +50,8 @@
         EventRegisterOverride[] EventRegisterOverrides { get; }
 
         void ProcessLoop(IMemoryManager container);
-        void ClearEvent(MemoryAddress address, ushort bank);
-        void SetEvent(string? name, MemoryAddress address, ushort bank, string? bits, int length, int size, bool instantaneous);
+        void ClearEvent(IGameHookEvent ev);
+        void SetEvent(IGameHookEvent ev);
         void UpdateAddressFromProperty();
     }
 }

@@ -3,12 +3,8 @@ using System.Collections;
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class BitFieldProperty : GameHookProperty, IGameHookProperty
+    public class BitFieldProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables), IGameHookProperty
     {
-        public BitFieldProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
-        {
-        }
-
         protected override byte[] FromValue(string value)
         {
             throw new NotImplementedException();
