@@ -434,168 +434,156 @@ namespace GameHook.Infrastructure
             }
         }
 
-        [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public struct WriteCall
+        public class WriteCall(bool active, bool frozen, long address, byte[] bytes) : ISerializable
         {
-            const int MaxWriteLength = 64 * 16 / 8;
-
-            public bool Active;
-            public bool Frozen;
-            public long Address;
-            public int WriteByteCount;
-            public ulong WriteByte0;
-            public ulong WriteByte1;
-            public ulong WriteByte2;
-            public ulong WriteByte3;
-            public ulong WriteByte4;
-            public ulong WriteByte5;
-            public ulong WriteByte6;
-            public ulong WriteByte7;
-            public ulong WriteByte8;
-            public ulong WriteByte9;
-            public ulong WriteByte10;
-            public ulong WriteByte11;
-            public ulong WriteByte12;
-            public ulong WriteByte13;
-            public ulong WriteByte14;
-            public ulong WriteByte15;
+            private readonly bool _active = active;
+            private readonly bool _frozen = frozen;
+            private readonly long _address = address;
+            private readonly byte[] _writeByte = bytes;
 
             public WriteCall() : this(false, false, 0x00, [])
             {
             }
-            public WriteCall(bool active, bool frozen, long address, byte[] bytes)
-            {
-                Active = active;
-                Frozen = frozen;
-                Address = address;
-                WriteByteCount = (bytes != null) ? bytes.Length : 0;
-                WriteByte0 = 0;
-                WriteByte1 = 0;
-                WriteByte2 = 0;
-                WriteByte3 = 0;
-                WriteByte4 = 0;
-                WriteByte5 = 0;
-                WriteByte6 = 0;
-                WriteByte7 = 0;
-                WriteByte8 = 0;
-                WriteByte9 = 0;
-                WriteByte10 = 0;
-                WriteByte11 = 0;
-                WriteByte12 = 0;
-                WriteByte13 = 0;
-                WriteByte14 = 0;
-                WriteByte15 = 0;
 
+            public byte[] Serialize()
+            {
+                byte[] activeBytes = BitConverter.GetBytes(_active);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(activeBytes);
+                activeBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(activeBytes));
+
+                byte[] frozenBytes = BitConverter.GetBytes(_frozen);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(frozenBytes);
+                frozenBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(frozenBytes));
+
+                byte[] addressBytes = BitConverter.GetBytes(_address);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(addressBytes);
+                addressBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(addressBytes));
+
+                byte[] writeByteBytes = [];
+                if (_writeByte != null)
+                {
+                    writeByteBytes = (byte[])_writeByte.Clone();
+                }
+                writeByteBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(writeByteBytes));
+
+                int writeByteBytesLength = writeByteBytes.Length;
+                byte[] writeByteBytesLengthByte = BitConverter.GetBytes(writeByteBytesLength);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(writeByteBytesLengthByte);
+                writeByteBytesLengthByte = Encoding.ASCII.GetBytes(Convert.ToBase64String(writeByteBytesLengthByte));
+
+                byte[] res =
+                [
+                    .. activeBytes,
+                    .. new byte[1] { 0 },
+                    .. frozenBytes,
+                    .. new byte[1] { 0 },
+                    .. addressBytes,
+                    .. new byte[1] { 0 },
+                    .. writeByteBytesLengthByte,
+                    .. new byte[1] { 0 },
+                    .. writeByteBytes,
+                ];
+                byte[] resLengthNonBase64 = BitConverter.GetBytes(res.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(resLengthNonBase64);
+                byte[] resLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(resLengthNonBase64));
+                return [.. resLength, .. new byte[1] { 0 }, .. res, .. new byte[1] { 0 }];
+            }
+
+            public static WriteCall Deserialize(byte[] bytes)
+            {
                 if (bytes == null)
-                {
-                    // noop, bits is already initialized to 0
-                }
-                else if (bytes.Length < 0 || bytes.Length > MaxWriteLength)
-                {
+                    throw new ArgumentNullException(nameof(bytes));
+                else if (bytes.Length < sizeof(int))
                     throw new ArgumentOutOfRangeException(nameof(bytes));
-                }
+                else if (bytes.Where(b => b == 0).Count() != 6)
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
                 else
                 {
-                    // TODO: this is an UGLY kludge to get arround pointers, and fixed size arrays
-                    // requiring "unsafe", which I'm not sure will break BizHawk or not or cause
-                    // other headaches. In c# 8/.net 2012 then [System.Runtime.CompilerServices.InlineArray()]
-                    // attribute can be used to bypass.
-                    for (int i = 0; i * 8 < bytes.Length; i++)
-                    {
-                        int j;
-                        byte[] writeBytes = new byte[8];
-                        for (j = 0; i * 8 + j < bytes.Length; j++)
-                        {
-                            writeBytes[j] = bytes[i * 8 + j];
-                        }
-                        for (; j < 8; j++)
-                        {
-                            writeBytes[j] = 0;
-                        }
-                        switch (i)
-                        {
-                            case 0:
-                                WriteByte0 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 1:
-                                WriteByte1 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 2:
-                                WriteByte2 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 3:
-                                WriteByte3 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 4:
-                                WriteByte4 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 5:
-                                WriteByte5 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 6:
-                                WriteByte6 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 7:
-                                WriteByte7 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 8:
-                                WriteByte8 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 9:
-                                WriteByte9 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 10:
-                                WriteByte10 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 11:
-                                WriteByte11 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 12:
-                                WriteByte12 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 13:
-                                WriteByte13 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 14:
-                                WriteByte14 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            case 15:
-                                WriteByte15 = BitConverter.ToUInt64(writeBytes, 0);
-                                break;
-                            default:
-                                throw new Exception("unexpected byte.");
-                        }
-                    }
+                    byte[][] segments = bytes.Split([(byte)0]);
+                    if (segments.Length != 6)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] lenBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[0]));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(lenBytes);
+                    int strLength = BitConverter.ToInt32(lenBytes, 0);
+                    if (strLength != segments[1].Length + 1
+                        + segments[2].Length + 1
+                        + segments[3].Length + 1
+                        + segments[4].Length + 1
+                        + segments[5].Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    byte[] activeBytes = segments[1];
+                    byte[] frozenBytes = segments[2];
+                    byte[] addressBytes = segments[3];
+                    byte[] writeByteBytesLengthByte = segments[4];
+                    byte[] writeByteBytes = segments[5];
+
+                    activeBytes = Convert.FromBase64String(Encoding.ASCII.GetString(activeBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(activeBytes);
+                    bool active = BitConverter.ToBoolean(activeBytes, 0);
+
+                    frozenBytes = Convert.FromBase64String(ASCIIEncoding.ASCII.GetString(frozenBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(frozenBytes);
+                    bool frozen = BitConverter.ToBoolean(frozenBytes, 0);
+
+                    addressBytes = Convert.FromBase64String(Encoding.ASCII.GetString(addressBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(addressBytes);
+                    long address = BitConverter.ToInt64(addressBytes, 0);
+
+                    writeByteBytesLengthByte = Convert.FromBase64String(Encoding.ASCII.GetString(writeByteBytesLengthByte));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(writeByteBytesLengthByte);
+                    int writeByteBytesLength = BitConverter.ToInt32(writeByteBytesLengthByte, 0);
+
+                    if (writeByteBytesLength != writeByteBytes.Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    writeByteBytes = Convert.FromBase64String(Encoding.ASCII.GetString(writeByteBytes));
+                    byte[] writeByte = (byte[])writeByteBytes.Clone();
+
+                    return new WriteCall(active, frozen, address, writeByte);
                 }
             }
 
-            public readonly byte[] GetBytes()
+            public bool Active
             {
-                List<byte> bytes =
-                [
-                    .. BitConverter.GetBytes(WriteByte0),
-                    .. BitConverter.GetBytes(WriteByte1),
-                    .. BitConverter.GetBytes(WriteByte2),
-                    .. BitConverter.GetBytes(WriteByte3),
-                    .. BitConverter.GetBytes(WriteByte4),
-                    .. BitConverter.GetBytes(WriteByte5),
-                    .. BitConverter.GetBytes(WriteByte6),
-                    .. BitConverter.GetBytes(WriteByte7),
-                    .. BitConverter.GetBytes(WriteByte8),
-                    .. BitConverter.GetBytes(WriteByte9),
-                    .. BitConverter.GetBytes(WriteByte10),
-                    .. BitConverter.GetBytes(WriteByte11),
-                    .. BitConverter.GetBytes(WriteByte12),
-                    .. BitConverter.GetBytes(WriteByte13),
-                    .. BitConverter.GetBytes(WriteByte14),
-                    .. BitConverter.GetBytes(WriteByte15),
-                ];
-
-                while (bytes.Count > WriteByteCount)
+                get
                 {
-                    bytes.RemoveAt(bytes.Count - 1);
+                    return _active;
                 }
-                return [.. bytes];
+            }
+
+            public bool Frozen
+            {
+                get
+                {
+                    return _frozen;
+                }
+            }
+
+            public long Address
+            {
+                get
+                {
+                    return _address;
+                }
+            }
+
+            public byte[] WriteByte
+            {
+                get
+                {
+                    return _writeByte;
+                }
             }
         }
     }

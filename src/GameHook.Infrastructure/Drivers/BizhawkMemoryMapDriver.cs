@@ -36,16 +36,12 @@ namespace GameHook.Infrastructure.Drivers
         private MemoryMappedFile? _dataMemoryMappedFile = null;
         private MemoryMappedViewAccessor? _dataAccessor = null;
 
-        private MemoryMappedFile? _writeCallMemoryMappedFile = null;
-        private MemoryMappedViewAccessor? _writeCallAccessor = null;
-        private int _writeCallElementSize = 0;
-        private Semaphore? _writeCallSemaphore = null;
-
         const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
         IGameHookEvent[] eventsLookup = [];
         Dictionary<long, IGameHookEvent[]> addressEventsLookup = [];
 
         PipeClient<EventOperation>? eventsPipe = null;
+        PipeClient<WriteCall>? writeCallsPipe = null;
 
         public BizhawkMemoryMapDriver(ILogger<BizhawkMemoryMapDriver> logger, AppSettings appSettings)
         {
@@ -85,25 +81,6 @@ namespace GameHook.Infrastructure.Drivers
             {
                 _dataMemoryMappedFile.Dispose();
                 _dataMemoryMappedFile = null;
-            }
-
-            if (_writeCallSemaphore != null)
-            {
-                _writeCallSemaphore.Close();
-                _writeCallSemaphore.Dispose();
-                _writeCallSemaphore = null;
-            }
-
-            if (_writeCallAccessor != null)
-            {
-                _writeCallAccessor.Dispose();
-                _writeCallAccessor = null;
-            }
-
-            if (_writeCallMemoryMappedFile != null)
-            {
-                _writeCallMemoryMappedFile.Dispose();
-                _writeCallMemoryMappedFile = null;
             }
 
             eventsLookup = new IGameHookEvent[eventsLookupSize];
@@ -168,12 +145,7 @@ namespace GameHook.Infrastructure.Drivers
 
             try
             {
-                int writeCallEventElementSize = Marshal.SizeOf(typeof(WriteCall));
-                _writeCallElementSize = sizeof(int) + sizeof(int) + writeCallEventElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE; // front, rear, array.
-                _writeCallMemoryMappedFile = MemoryMappedFile.OpenExisting("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", MemoryMappedFileRights.ReadWrite);
-                _writeCallAccessor = _writeCallMemoryMappedFile.CreateViewAccessor(0, _writeCallElementSize, MemoryMappedFileAccess.ReadWrite);
-
-                _writeCallSemaphore = Semaphore.OpenExisting(name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
+                writeCallsPipe = new("GAMEHOOK_BIZHAWK_WRITE.pipe", x => WriteCall.Deserialize(x));
             }
             catch (FileNotFoundException ex)
             {
@@ -221,54 +193,18 @@ namespace GameHook.Infrastructure.Drivers
 
         public Task WriteBytes(uint startingMemoryAddress, byte[] values)
         {
+            if (writeCallsPipe == null)
+            {
+                throw new NullReferenceException(nameof(writeCallsPipe));
+            }
             try
             {
-                _writeCallSemaphore!.WaitOne();
+                IGameHookEvent[] events = (addressEventsLookup != null) ? (addressEventsLookup.ContainsKey(startingMemoryAddress) ? addressEventsLookup[startingMemoryAddress] : []) : [];
+                bool frozen = events.Any(x => x?.Property?.Instantaneous != null && x.Property.Instantaneous.Value);
 
-                try
-                {
-                    const int writeCallsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE;
-                    WriteCall[] writeCalls = new WriteCall[writeCallsLookupSize];
-
-                    // read in the current queue state.
-                    _writeCallAccessor!.Read(0, out int front);
-                    _writeCallAccessor.Read(sizeof(int), out int rear);
-                    _writeCallAccessor.ReadArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
-
-                    IGameHookEvent[] events = (addressEventsLookup != null) ? (addressEventsLookup.ContainsKey(startingMemoryAddress) ? addressEventsLookup[startingMemoryAddress] : []) : [];
-                    bool frozen = events.Any(x => x?.Property?.Instantaneous != null && x.Property.Instantaneous.Value);
-
-                    // create the queue and enqueue the write
-                    CircularArrayQueue <WriteCall> queue = new(writeCalls, front, rear);
-                    WriteCall writeCall = new(true, frozen, startingMemoryAddress, values);
-                    if (!queue.Enqueue(writeCall))
-                    {
-                        throw new Exception("write data queue full, too many write events sent too closely together.");
-                    }
-
-                    // write the data back.
-                    _writeCallAccessor.Write(0, queue.Front);
-                    _writeCallAccessor.Write(sizeof(int), queue.Rear);
-                    writeCalls = queue.Array;
-                    _writeCallAccessor.WriteArray(sizeof(int) * 2, writeCalls, 0, writeCallsLookupSize);
-                }
-                catch (FileNotFoundException ex)
-                {
-                    throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
-                }
-                catch
-                {
-                    throw;
-                }
-                finally
-                {
-                    //eventsSemaphore.Release();
-                    _writeCallSemaphore.Release();
-                }
-
-                return Task.CompletedTask;
+                writeCallsPipe.Write(new WriteCall(true, frozen, startingMemoryAddress, values));
             }
-            catch (IOException ex)
+            catch (FileNotFoundException ex)
             {
                 throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
             }
@@ -276,6 +212,8 @@ namespace GameHook.Infrastructure.Drivers
             {
                 throw;
             }
+
+            return Task.CompletedTask;
         }
 
         public Task ClearEvents()

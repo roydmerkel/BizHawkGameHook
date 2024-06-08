@@ -76,21 +76,18 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     private readonly MemoryMappedFile? GameHookData_MemoryMappedFile;
     private readonly MemoryMappedViewAccessor? GameHookData_Accessor;
 
-    private readonly MemoryMappedFile? GameHookWriteCall_MemoryMappedFile;
-    private readonly MemoryMappedViewAccessor? GameHookWriteCall_Accessor;
-    private readonly int GameHookWriteCall_ElementSize;
-    private readonly Semaphore GameHookWriteCall_Semaphore;
-
     private readonly object GameHook_EventLock = new();
     private IDictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>> GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
     private IDictionary<ulong, IDictionary<EventType, EventAddress>> GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
     private IDictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry> scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
     private SharedPlatformConstants.PlatformMapper? Mapper = null;
-    private Queue<PipeBase<EventOperation>.PipeReadArgs> eventOperationsQueue = new();
+    private Queue<EventOperation> eventOperationsQueue = new();
+    private Queue<WriteCall> writeCallsQueue = new();
 
     private readonly Dictionary<MemoryDomain, Dictionary<long, byte>> InstantWriteMap;
 
     private readonly PipeServer<EventOperation>? eventsPipe;
+    private readonly PipeServer<WriteCall>? writeCallsPipe = null;
 
     private byte[] DataBuffer { get; } = new byte[SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE];
 
@@ -123,35 +120,29 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         GameHookData_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_DATA.bin", SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE, MemoryMappedFileAccess.ReadWrite);
         GameHookData_Accessor = GameHookData_MemoryMappedFile.CreateViewAccessor();
 
-        GameHookWriteCall_ElementSize = Marshal.SizeOf(typeof(WriteCall));
-        long writeEventsMappedSize = sizeof (int) + sizeof (int) + GameHookWriteCall_ElementSize * SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE; // front, rear, array.
-        GameHookWriteCall_MemoryMappedFile = MemoryMappedFile.CreateOrOpen("GAMEHOOK_BIZHAWK_WRITE_CALLS.bin", writeEventsMappedSize, MemoryMappedFileAccess.ReadWrite);
-        GameHookWriteCall_Accessor = GameHookWriteCall_MemoryMappedFile.CreateViewAccessor(0, writeEventsMappedSize, MemoryMappedFileAccess.ReadWrite);
-
-        WriteCall template = new();
-        WriteCall[] writeCalls = new WriteCall[SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE];
-        Fill(writeCalls, template, 0, writeCalls.Length);
-        GameHookWriteCall_Accessor.Write(0, -1);
-        GameHookWriteCall_Accessor.Write(sizeof(int), -1);
-        GameHookWriteCall_Accessor.WriteArray(sizeof(int) * 2, writeCalls, 0, writeCalls.Length);
-
-        GameHookWriteCall_Semaphore = new Semaphore(initialCount: 1, maximumCount: 1, name: "GAMEHOOK_BIZHAWK_WRITE_CALLS.semaphore");
-
         InstantWriteMap = new();
 
         eventsPipe = new("GAMEHOOK_BIZHAWK_EVENTS.pipe", x => EventOperation.Deserialize(x));
         eventsPipe.PipeReadEvent += OnEventRead;
+
+        writeCallsPipe = new("GAMEHOOK_BIZHAWK_WRITE.pipe", x => WriteCall.Deserialize(x));
+        writeCallsPipe.PipeReadEvent += OnWriteRead;
+    }
+
+    private void OnWriteRead(object sender, PipeBase<WriteCall>.PipeReadArgs e)
+    {
+        writeCallsQueue.Enqueue(e.Arg);
     }
 
     private void OnEventRead(object sender, PipeBase<EventOperation>.PipeReadArgs e)
     {
         lock(GameHook_EventLock)
         {
-            eventOperationsQueue.Enqueue(e);
+            eventOperationsQueue.Enqueue(e.Arg);
         }
     }
 
-    private void ProcessEventOperation(PipeBase<EventOperation>.PipeReadArgs e)
+    private void ProcessEventOperation(EventOperation e)
     {
         if (Mapper?.GetBankFunctionAndCallbackDomain == null)
         {
@@ -161,7 +152,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         {
             throw new Exception("Callbacks aren't supported yet on this platform.");
         }
-        switch (e.Arg.OpType)
+        switch (e.OpType)
         {
             case EventOperationType.EventOperationType_Clear:
                 {
@@ -176,14 +167,14 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     {
                         throw new NullReferenceException(nameof(Platform));
                     }
-                    if (e.Arg?.EventAddress == null)
-                        throw new NullReferenceException(nameof(e.Arg.EventAddress));
-                    EventType evEventType = e.Arg.EventType;
-                    ulong? serial = e.Arg.EventSerial;
+                    if (e.EventAddress == null)
+                        throw new NullReferenceException(nameof(e.EventAddress));
+                    EventType evEventType = e.EventType;
+                    ulong? serial = e.EventSerial;
                     if (serial == null)
                         throw new NullReferenceException(nameof(serial));
                     ulong serialValue = serial.Value;
-                    EventAddress ev = e.Arg.EventAddress;
+                    EventAddress ev = e.EventAddress;
                     if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
                     {
                         if ((ev.EventType & EventType.EventType_HardReset) != 0)
@@ -424,10 +415,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 }
             case EventOperationType.EventOperationType_Remove:
                 {
-                    ulong? serial = e.Arg.EventSerial;
+                    ulong? serial = e.EventSerial;
                     if (serial == null || !GameHook_SerialToEvent.ContainsKey(serial.Value))
                         throw new NullReferenceException(nameof(serial));
-                    EventType evEventType = e.Arg.EventType;
+                    EventType evEventType = e.EventType;
                     ulong serialValue = serial.Value;
                     EventAddress ev = GameHook_SerialToEvent[serialValue][evEventType];
                     if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
@@ -477,105 +468,64 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             default:
             case EventOperationType.EventOperationType_Undefined:
                 {
-                    throw new Exception($"Unexpected event operation type: {e.Arg.OpType}");
+                    throw new Exception($"Unexpected event operation type: {e.OpType}");
                 }
         }
     }
 
-    private void WriteData()
+    private void WriteData(WriteCall data)
     {
         if (Platform == null)
         {
             return;
         }
 
-        GameHookWriteCall_Semaphore.WaitOne();
-
-        InstantWriteMap.Clear();
-
-        // read in the current queue state.
-        GameHookWriteCall_Accessor!.Read(0, out int front);
-
-        if (front != -1)
+        //MemoryDomains.First().PokeByte();
+        if (data.Active)
         {
-            GameHookWriteCall_Accessor!.Read(sizeof(int), out int rear);
+            UInt32 address = Convert.ToUInt32(data.Address);
+            UInt32 baseAddress = address;
+            PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = Platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+            MemoryDomain domain = MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress");
+            address -= Convert.ToUInt32(platformMemoryLayoutEntry.PhysicalStartingAddress);
 
-            if (rear != -1)
+            byte[] bytes = data.WriteByte;
+            for (int i = 0; i < bytes.Length; i++)
             {
-                WriteCall[] writeCalls = new WriteCall[SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE];
-                GameHookWriteCall_Accessor!.ReadArray(sizeof(int) * 2, writeCalls, 0, SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE);
+                domain.PokeByte(address + i, bytes[i]);
+            }
 
-                bool changed = false;
-                // create the queue and enqueue the write
-                CircularArrayQueue<WriteCall> queue = new(writeCalls, front, rear);
-                WriteCall? data;
-                while ((data = queue.Dequeue()) != null)
+            if (data.Frozen)
+            {
+                PlatformMemoryLayoutEntry[] platformMemoryLayoutEntries = Platform.FindMemoryLayouts(baseAddress) ?? throw new Exception("unsupported address");
+                MemoryDomain[] domains = platformMemoryLayoutEntries.Select(platformMemoryLayoutEntry => MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress")).ToArray();
+
+                for (int idx = 0; idx < platformMemoryLayoutEntries.Length && idx < domains.Length; idx++)
                 {
-                    //MemoryDomains.First().PokeByte();
-                    if (data.Value.Active)
+                    MemoryDomain curDomain = domains[idx];
+                    PlatformMemoryLayoutEntry curPlatformMemoryLayoutEntry = platformMemoryLayoutEntries[idx];
+                    if (!InstantWriteMap.ContainsKey(curDomain))
                     {
-                        changed = true;
-                        UInt32 address = Convert.ToUInt32(data.Value.Address);
-                        UInt32 baseAddress = address;
-                        PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = Platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                        MemoryDomain domain = MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress");
-                        address -= Convert.ToUInt32(platformMemoryLayoutEntry.PhysicalStartingAddress);
-
-                        byte[] bytes = data.Value.GetBytes();
-                        for (int i = 0; i < bytes.Length; i++)
-                        {
-                            domain.PokeByte(address + i, bytes[i]);
-                        }
-
-                        if (data.Value.Frozen)
-                        {
-                            PlatformMemoryLayoutEntry[] platformMemoryLayoutEntries = Platform.FindMemoryLayouts(baseAddress) ?? throw new Exception("unsupported address");
-                            MemoryDomain[] domains = platformMemoryLayoutEntries.Select(platformMemoryLayoutEntry => MemoryDomains?[platformMemoryLayoutEntry.BizhawkIdentifier] ?? MemoryDomains?[platformMemoryLayoutEntry.BizhawkAlternateIdentifier] ?? throw new Exception("unsupported adress")).ToArray();
-
-                            for (int idx = 0; idx < platformMemoryLayoutEntries.Length && idx < domains.Length; idx++)
-                            {
-                                MemoryDomain curDomain = domains[idx];
-                                PlatformMemoryLayoutEntry curPlatformMemoryLayoutEntry = platformMemoryLayoutEntries[idx];
-                                if (!InstantWriteMap.ContainsKey(curDomain))
-                                {
-                                    InstantWriteMap.Add(curDomain, new());
-                                }
-
-                                UInt32 addr = baseAddress - Convert.ToUInt32(curPlatformMemoryLayoutEntry.PhysicalStartingAddress);
-
-                                for (int i = 0; i < bytes.Length; i++)
-                                {
-                                    if (!InstantWriteMap[curDomain].ContainsKey(addr + i))
-                                    {
-                                        InstantWriteMap[curDomain].Add(addr + i, bytes[i]);
-                                    }
-                                    else
-                                    {
-                                        InstantWriteMap[curDomain][addr + i] = bytes[i];
-                                    }
-                                }
-                            }
-                        }
-
+                        InstantWriteMap.Add(curDomain, new());
                     }
-                    else
+
+                    UInt32 addr = baseAddress - Convert.ToUInt32(curPlatformMemoryLayoutEntry.PhysicalStartingAddress);
+
+                    for (int i = 0; i < bytes.Length; i++)
                     {
-                        throw new Exception("unexpected inactive write message");
+                        if (!InstantWriteMap[curDomain].ContainsKey(addr + i))
+                        {
+                            InstantWriteMap[curDomain].Add(addr + i, bytes[i]);
+                        }
+                        else
+                        {
+                            InstantWriteMap[curDomain][addr + i] = bytes[i];
+                        }
                     }
-                }
-
-                if (changed)
-                {
-                    // write the queue back.
-                    writeCalls = queue.Array;
-                    GameHookWriteCall_Accessor!.Write(0, queue.Front);
-                    GameHookWriteCall_Accessor!.Write(sizeof(int), queue.Rear);
-                    GameHookWriteCall_Accessor!.WriteArray(sizeof(int) * 2, writeCalls, 0, SharedPlatformConstants.BIZHAWK_MAX_WRITE_CALLS_SIZE);
                 }
             }
-        }
 
-        GameHookWriteCall_Semaphore.Release();
+        }
     }
 
     public override void Restart()
@@ -688,7 +638,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
         lock (GameHook_EventLock)
         {
-            PipeBase<EventOperation>.PipeReadArgs e;
+            EventOperation e;
             while(eventOperationsQueue.Count > 0)
             {
                 e = eventOperationsQueue.Dequeue();
@@ -753,7 +703,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                 if (FrameSkip != 0) { return; }
             }
 
-            WriteData();
+            WriteCall data;
+            while (writeCallsQueue.Count > 0)
+            {
+                data = writeCallsQueue.Dequeue();
+                WriteData(data);
+            }
 
             foreach (var entry in Platform.MemoryLayout)
             {

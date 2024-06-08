@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO.Pipes;
 using System.Linq;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -42,32 +43,42 @@ namespace GameHook.Integrations.BizHawk
         {
             add
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (_pipeConnectedEvent != null)
+                    lock (_lock)
                     {
-                        _pipeConnectedEvent += value;
+                        locked = true;
+                        if (_pipeConnectedEvent != null)
+                        {
+                            _pipeConnectedEvent += value;
+                        }
+                        else
+                        {
+                            _pipeConnectedEvent = value;
+                        }
                     }
-                    else
-                    {
-                        _pipeConnectedEvent = value;
-                    }
-                }
+                } while (!locked);
             }
 
             remove
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (_pipeConnectedEvent != null)
+                    lock (_lock)
                     {
-                        _pipeConnectedEvent -= value;
+                        locked = true;
+                        if (_pipeConnectedEvent != null)
+                        {
+                            _pipeConnectedEvent -= value;
+                        }
+                        else
+                        {
+                            _pipeConnectedEvent = null;
+                        }
                     }
-                    else
-                    {
-                        _pipeConnectedEvent = null;
-                    }
-                }
+                } while (!locked);
             }
         }
 
@@ -75,32 +86,42 @@ namespace GameHook.Integrations.BizHawk
         {
             add
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (_pipeReadEvent != null)
+                    lock (_lock)
                     {
-                        _pipeReadEvent += value;
+                        locked = true;
+                        if (_pipeReadEvent != null)
+                        {
+                            _pipeReadEvent += value;
+                        }
+                        else
+                        {
+                            _pipeReadEvent = value;
+                        }
                     }
-                    else
-                    {
-                        _pipeReadEvent = value;
-                    }
-                }
+                } while (!locked);
             }
 
             remove
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (_pipeReadEvent != null)
+                    lock (_lock)
                     {
-                        _pipeReadEvent -= value;
+                        locked = true;
+                        if (_pipeReadEvent != null)
+                        {
+                            _pipeReadEvent -= value;
+                        }
+                        else
+                        {
+                            _pipeReadEvent = null;
+                        }
                     }
-                    else
-                    {
-                        _pipeReadEvent = null;
-                    }
-                }
+                } while (!locked) ;
             }
         }
 
@@ -132,13 +153,26 @@ namespace GameHook.Integrations.BizHawk
 
         protected void Connected()
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                _isConnected = true;
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    _isConnected = true;
+                }
+            } while (!locked);
             _pipeConnectedEvent?.Invoke(this, new PipeConnectedArgs());
             BeginRead();
-            DoWriteImpl();
+            locked = false;
+            do
+            {
+                lock (_lock)
+                {
+                    locked = true;
+                    DoWriteImpl();
+                }
+            } while (!locked);
         }
 
         public void Write(T toWrite)
@@ -148,25 +182,35 @@ namespace GameHook.Integrations.BizHawk
                 throw new NullReferenceException(nameof(_stream));
             }
 
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                _writeQueue.Enqueue(toWrite);
-
-                if (!_isWriting && _isConnected)
+                lock (_lock)
                 {
-                    _isWriting = true;
-                    DoWriteImpl();
+                    locked = true;
+                    _writeQueue.Enqueue(toWrite);
+
+                    if (!_isWriting && _isConnected)
+                    {
+                        _isWriting = true;
+                        DoWriteImpl();
+                    }
                 }
-            }
+            } while (!locked);
         }
 
         private void DoWrite(IAsyncResult result)
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                _stream!.EndWrite(result);
-                DoWriteImpl();
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    _stream!.EndWrite(result);
+                    DoWriteImpl();
+                }
+            } while (!locked);
         }
 
         private void DoWriteImpl()
@@ -189,10 +233,15 @@ namespace GameHook.Integrations.BizHawk
 
         protected void BeginRead()
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                BeginReadImpl();
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    BeginReadImpl();
+                }
+            } while (!locked);
         }
 
         private void BeginReadImpl()
@@ -208,83 +257,97 @@ namespace GameHook.Integrations.BizHawk
 
         private void ReadPrefix(IAsyncResult result)
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
-                byte[] length = state[0] as byte[] ?? throw new NullReferenceException("state");
-                int? read = state[1] as int? ?? throw new NullReferenceException("state");
-                int? toRead = state[2] as int? ?? throw new NullReferenceException("state");
+                lock (_lock)
+                {
+                    locked = true;
+                    object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
+                    byte[] length = state[0] as byte[] ?? throw new NullReferenceException("state");
+                    int? read = state[1] as int? ?? throw new NullReferenceException("state");
+                    int? toRead = state[2] as int? ?? throw new NullReferenceException("state");
 
-                int lengthRead = _stream!.EndRead(result);
-                if (lengthRead < toRead.Value)
-                {
-                    read = read.Value + lengthRead;
-                    toRead = toRead.Value - lengthRead;
-                    _stream!.BeginRead(length, read.Value, toRead.Value, ReadPrefix, new object[] { length, read, toRead });
+                    int lengthRead = _stream!.EndRead(result);
+                    if (lengthRead < toRead.Value)
+                    {
+                        read = read.Value + lengthRead;
+                        toRead = toRead.Value - lengthRead;
+                        _stream!.BeginRead(length, read.Value, toRead.Value, ReadPrefix, new object[] { length, read, toRead });
+                    }
+                    else
+                    {
+                        byte[] sepBuf = new byte[1];
+                        _stream!.BeginRead(sepBuf, 0, 1, ReadSep, new object[] { sepBuf, length });
+                    }
                 }
-                else
-                {
-                    byte[] sepBuf = new byte[1];
-                    _stream!.BeginRead(sepBuf, 0, 1, ReadSep, new object[] { sepBuf, length });
-                }
-            }
+            } while (!locked);
         }
 
         private void ReadSep(IAsyncResult result)
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
-                byte[] sepBuf = state[0] as byte[] ?? throw new NullReferenceException("state");
-                byte[] lengthBytes = state[1] as byte[] ?? throw new NullReferenceException("state");
-
-                int lengthRead = _stream!.EndRead(result);
-
-                if (lengthRead < 1)
+                lock (_lock)
                 {
-                    _stream!.BeginRead(sepBuf, 0, 1, ReadSep, new object[] { sepBuf, lengthBytes });
-                }
-                else
-                {
-                    if (sepBuf[0] != '\0')
-                        throw new FormatException();
-                    if (!BitConverter.IsLittleEndian)
-                        Array.Reverse(lengthBytes);
+                    locked = true;
+                    object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
+                    byte[] sepBuf = state[0] as byte[] ?? throw new NullReferenceException("state");
+                    byte[] lengthBytes = state[1] as byte[] ?? throw new NullReferenceException("state");
 
-                    int length = BitConverter.ToInt32(lengthBytes, 0);
-                    byte[] dataBuf = new byte[length];
+                    int lengthRead = _stream!.EndRead(result);
 
-                    int? read = 0;
-                    int? toRead = length;
-                    _stream!.BeginRead(dataBuf, read.Value, toRead.Value, ReadData, new object[] { dataBuf, read, toRead });
+                    if (lengthRead < 1)
+                    {
+                        _stream!.BeginRead(sepBuf, 0, 1, ReadSep, new object[] { sepBuf, lengthBytes });
+                    }
+                    else
+                    {
+                        if (sepBuf[0] != '\0')
+                            throw new FormatException();
+                        if (!BitConverter.IsLittleEndian)
+                            Array.Reverse(lengthBytes);
+
+                        int length = BitConverter.ToInt32(lengthBytes, 0);
+                        byte[] dataBuf = new byte[length];
+
+                        int? read = 0;
+                        int? toRead = length;
+                        _stream!.BeginRead(dataBuf, read.Value, toRead.Value, ReadData, new object[] { dataBuf, read, toRead });
+                    }
                 }
-            }
+            } while (!locked);
         }
 
         private void ReadData(IAsyncResult result)
         {
-
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
-                byte[] dataBuf = state[0] as byte[] ?? throw new NullReferenceException("state");
-                int? read = state[1] as int? ?? throw new NullReferenceException("state");
-                int? toRead = state[2] as int? ?? throw new NullReferenceException("state");
+                lock (_lock)
+                {
+                    locked = true;
+                    object[] state = result.AsyncState as object[] ?? throw new NullReferenceException("state");
+                    byte[] dataBuf = state[0] as byte[] ?? throw new NullReferenceException("state");
+                    int? read = state[1] as int? ?? throw new NullReferenceException("state");
+                    int? toRead = state[2] as int? ?? throw new NullReferenceException("state");
 
-                int lengthRead = _stream!.EndRead(result);
-                if (lengthRead < toRead.Value)
-                {
-                    read = read.Value + lengthRead;
-                    toRead = toRead.Value - lengthRead;
-                    _stream!.BeginRead(dataBuf, read.Value, toRead.Value, ReadData, new object[] { dataBuf, read, toRead });
+                    int lengthRead = _stream!.EndRead(result);
+                    if (lengthRead < toRead.Value)
+                    {
+                        read = read.Value + lengthRead;
+                        toRead = toRead.Value - lengthRead;
+                        _stream!.BeginRead(dataBuf, read.Value, toRead.Value, ReadData, new object[] { dataBuf, read, toRead });
+                    }
+                    else
+                    {
+                        T readData = _objDeserializer(dataBuf);
+                        _pipeReadEvent?.Invoke(this, new PipeReadArgs(readData));
+                        BeginReadImpl();
+                    }
                 }
-                else
-                {
-                    T readData = _objDeserializer(dataBuf);
-                    _pipeReadEvent?.Invoke(this, new PipeReadArgs(readData));
-                    BeginReadImpl();
-                }
-            }
+            } while (!locked);
         }
     }
 
@@ -312,14 +375,19 @@ namespace GameHook.Integrations.BizHawk
         {
             if (!_isStopped)
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (!_isStopping)
+                    lock (_lock)
                     {
-                        _pipe!.EndWaitForConnection(result);
-                        Connected();
+                        locked = true;
+                        if (!_isStopping)
+                        {
+                            _pipe!.EndWaitForConnection(result);
+                            Connected();
+                        }
                     }
-                }
+                } while (!locked);
             }
         }
     }
@@ -402,29 +470,44 @@ namespace GameHook.Integrations.BizHawk
 
         private void BeginConnect(AsyncCallback callback)
         {
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                ParameterizedThreadStart parameterizedThreadStart = new(BeginConnectImpl);
-                Thread connectThread = new(parameterizedThreadStart);
-                connectThread.Start(callback);
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    ParameterizedThreadStart parameterizedThreadStart = new(BeginConnectImpl);
+                    Thread connectThread = new(parameterizedThreadStart);
+                    connectThread.Start(callback);
+                }
+            } while (!locked);
         }
 
         private void BeginConnectImpl(object? obj)
         {
             PipeConnectAsyncResult result = new();
             AsyncCallback callback = obj as AsyncCallback ?? throw new NullReferenceException(nameof(obj));
-            lock (_lock)
+            bool locked = false;
+            do
             {
-                _isConnected = false;
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    _isConnected = false;
+                }
+            } while (!locked);
             _pipe!.Connect();
             ManualResetEvent waitHandle = result.AsyncWaitHandle as ManualResetEvent ?? throw new NullReferenceException(nameof(result.AsyncWaitHandle));
             waitHandle.Set();
-            lock (_lock)
+            locked = false;
+            do
             {
-                _isConnected = true;
-            }
+                lock (_lock)
+                {
+                    locked = true;
+                    _isConnected = true;
+                }
+            } while (!locked);
             callback.Invoke(result);
             waitHandle.Close();
             waitHandle.Dispose();
@@ -433,13 +516,18 @@ namespace GameHook.Integrations.BizHawk
         {
             if (!_isStopped)
             {
-                lock (_lock)
+                bool locked = false;
+                do
                 {
-                    if (!_isStopping)
+                    lock (_lock)
                     {
-                        Connected();
+                        locked = true;
+                        if (!_isStopping)
+                        {
+                            Connected();
+                        }
                     }
-                }
+                } while (!locked);
             }
         }
     }
