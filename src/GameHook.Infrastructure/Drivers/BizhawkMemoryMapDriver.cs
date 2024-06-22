@@ -1,17 +1,11 @@
 ﻿using GameHook.Domain;
 using GameHook.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.ComponentModel.DataAnnotations;
 using System.IO.MemoryMappedFiles;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Xml.Linq;
+using System.Xml.Schema;
 using static GameHook.Infrastructure.BizHawkInterface;
 using static GameHook.Infrastructure.PipeBase<GameHook.Infrastructure.BizHawkInterface.EventOperation>;
-using static System.Net.Mime.MediaTypeNames;
 
 #pragma warning disable CA1416 // Validate platform compatibility
 namespace GameHook.Infrastructure.Drivers
@@ -36,12 +30,12 @@ namespace GameHook.Infrastructure.Drivers
         private MemoryMappedFile? _dataMemoryMappedFile = null;
         private MemoryMappedViewAccessor? _dataAccessor = null;
 
-        const int eventsLookupSize = SharedPlatformConstants.BIZHAWK_MAX_EVENTS_SIZE;
-        IGameHookEvent[] eventsLookup = [];
+        List<IGameHookEvent> eventsLookup = [];
         Dictionary<long, IGameHookEvent[]> addressEventsLookup = [];
 
         PipeClient<EventOperation>? eventsPipe = null;
         PipeClient<WriteCall>? writeCallsPipe = null;
+        PipeClient<InstantReadEvents>? instantReadValuesPipe = null;
 
         public BizhawkMemoryMapDriver(ILogger<BizhawkMemoryMapDriver> logger, AppSettings appSettings)
         {
@@ -83,7 +77,6 @@ namespace GameHook.Infrastructure.Drivers
                 _dataMemoryMappedFile = null;
             }
 
-            eventsLookup = new IGameHookEvent[eventsLookupSize];
             addressEventsLookup = [];
 
             try
@@ -156,7 +149,35 @@ namespace GameHook.Infrastructure.Drivers
                 throw;
             }
 
+            try
+            {
+                instantReadValuesPipe = new("GAMEHOOK_BIZHAWK_INSTANT_READ.pipe", x => InstantReadEvents.Deserialize(x));
+                instantReadValuesPipe.PipeReadEvent += OnInstantReadValuesRead;
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+            
             return Task.CompletedTask;
+        }
+
+        private void OnInstantReadValuesRead(object? sender, PipeBase<InstantReadEvents>.PipeReadArgs e)
+        {
+            foreach(KeyValuePair<EventAddress, IList<byte[]>> instantReadEvent in e.Arg)
+            {
+                EventAddress eventAddress = instantReadEvent.Key;
+                IList<byte[]> values = instantReadEvent.Value;
+
+                IGameHookEvent? ev = eventsLookup.Where(x => x.SerialNumber == eventAddress.SerialNumber).DefaultIfEmpty(null).FirstOrDefault();
+                if(ev != null)
+                {
+                }
+            }
         }
 
         void EventPipeConnectedHandler(object sender, PipeConnectedArgs e)
@@ -224,8 +245,8 @@ namespace GameHook.Infrastructure.Drivers
             }
             try
             {
-                eventsLookup = [];
                 addressEventsLookup = [];
+                eventsLookup = [];
                 eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Clear, EventType.EventType_Undefined, null, null));
 
                 return Task.CompletedTask;
@@ -269,7 +290,8 @@ namespace GameHook.Infrastructure.Drivers
                 bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
                 ulong serialNumber = eventObj?.SerialNumber ?? 0;
 
-                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Add, eventType, serialNumber, new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Add, eventType, serialNumber, new EventAddress(serialNumber, name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+                eventsLookup.Add(eventObj);
 
                 return Task.CompletedTask;
             }
@@ -312,7 +334,8 @@ namespace GameHook.Infrastructure.Drivers
                 bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
                 ulong serialNumber = eventObj?.SerialNumber ?? 0;
 
-                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Remove, eventType, serialNumber, new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Remove, eventType, serialNumber, new EventAddress(serialNumber, name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+                eventsLookup.Remove(eventObj);
 
                 return Task.CompletedTask;
             }

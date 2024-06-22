@@ -28,11 +28,163 @@ namespace GameHook.Infrastructure
                 segments = indecies.Select((x, idx) => (idx == 0) ? new ArraySegment<T>(data, 0, x) : new ArraySegment<T>(data, indecies[idx - 1] + 1, x - indecies[idx - 1] - 1)).ToArray();
             }
             
-            return segments.Select(x => x.Array ?? throw new NullReferenceException()).ToArray();
+            return segments.Select(x => x.ToArray() ?? throw new NullReferenceException()).ToArray();
         }
     }
     internal static class BizHawkInterface
     {
+        public class InstantReadEvents : Dictionary<EventAddress, IList<byte[]>>, ISerializable
+        {
+            public InstantReadEvents() : base()
+            {
+            }
+
+            public static InstantReadEvents Deserialize(byte[] bytes)
+            {
+                InstantReadEvents ret = [];
+
+                if (bytes == null)
+                    throw new ArgumentNullException(nameof(bytes));
+                else if (bytes.Length < sizeof(int))
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else if (bytes.Where(b => b == 0).Count() != 3)
+                    throw new ArgumentOutOfRangeException(nameof(bytes));
+                else
+                {
+                    byte[][] segments = bytes.Split([(byte)0]);
+                    if (segments.Length != 3)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    byte[] entryCountBytes = segments[0];
+                    entryCountBytes = Convert.FromBase64String(Encoding.ASCII.GetString(entryCountBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(entryCountBytes);
+                    int entryCount = BitConverter.ToInt32(entryCountBytes, 0);
+
+                    byte[] bytesStringLengthBytes = segments[1];
+                    bytesStringLengthBytes = Convert.FromBase64String(Encoding.ASCII.GetString(bytesStringLengthBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(bytesStringLengthBytes);
+                    int bytesStringLength = BitConverter.ToInt32(bytesStringLengthBytes, 0);
+
+                    byte[] bytesStringBytes = segments[2];
+                    if (bytesStringLength != bytesStringBytes.Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+                    bytesStringBytes = Convert.FromBase64String(Encoding.ASCII.GetString(bytesStringBytes));
+                    string bytesStringString = Encoding.UTF8.GetString(bytesStringBytes);
+                    List<string> bytesStringsList = [.. bytesStringString.Split('\0')];
+                    for(int i = bytesStringsList.Count - 1; i >= 0; i--)
+                        if (bytesStringsList[i] == null || String.IsNullOrEmpty(bytesStringsList[i]))
+                            bytesStringsList.RemoveAt(i);
+                    string[] bytesStrings = [.. bytesStringsList];
+                    if (entryCount != bytesStrings.Length)
+                        throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                    foreach (string bytesString in bytesStrings)
+                    {
+                        byte[] kvBytes = Convert.FromBase64String(Encoding.ASCII.GetString(Encoding.ASCII.GetBytes(bytesString)));
+                        if (kvBytes.Where(b => b == 0).Count() != 4)
+                            throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                        byte[][] kvBytesBytes = kvBytes.Split([(byte)0]);
+
+                        byte[] eventAddressBytes = Convert.FromBase64String(Encoding.ASCII.GetString(kvBytesBytes[0]));
+                        EventAddress eventAddress = EventAddress.Deserialize(eventAddressBytes);
+
+                        ret.Add(eventAddress, new List<byte[]>());
+
+                        byte[] countBytesBytes = kvBytesBytes[1];
+                        countBytesBytes = Convert.FromBase64String(Encoding.ASCII.GetString(countBytesBytes));
+                        if (!BitConverter.IsLittleEndian)
+                            Array.Reverse(countBytesBytes);
+                        int countBytes = BitConverter.ToInt32(countBytesBytes, 0);
+
+                        byte[] bytesBytesStringLengthBytes = kvBytesBytes[2];
+                        bytesBytesStringLengthBytes = Convert.FromBase64String(Encoding.ASCII.GetString(bytesBytesStringLengthBytes));
+                        if (!BitConverter.IsLittleEndian)
+                            Array.Reverse(bytesBytesStringLengthBytes);
+                        int bytesBytesStringLength = BitConverter.ToInt32(bytesBytesStringLengthBytes, 0);
+
+                        byte[] bytesBytesStringsBytes = kvBytesBytes[3];
+                        if (bytesBytesStringsBytes.Length != bytesBytesStringLength)
+                            throw new ArgumentOutOfRangeException(nameof(bytes));
+                        string bytesBytesStrings = Encoding.UTF8.GetString(Convert.FromBase64String(Encoding.ASCII.GetString(bytesBytesStringsBytes)));
+                        List<string> bytesBytesStringsListList = [.. bytesBytesStrings.Split('\0')];
+                        for (int i = bytesBytesStringsListList.Count - 1; i >= 0; i--)
+                            if (bytesBytesStringsListList[i] == null || String.IsNullOrEmpty(bytesBytesStringsListList[i]))
+                                bytesBytesStringsListList.RemoveAt(i);
+                        string[] bytesBytesStringsList = [.. bytesBytesStringsListList];
+
+                        if (bytesBytesStringsList.Length != countBytes)
+                            throw new ArgumentOutOfRangeException(nameof(bytes));
+
+                        foreach (var bytesBytesString in bytesBytesStringsList)
+                        {
+                            byte[] bytesBytes = Convert.FromBase64String(Encoding.ASCII.GetString(Encoding.ASCII.GetBytes(bytesBytesString)));
+                            ret[eventAddress].Add(bytesBytes);
+                        }
+                    }
+
+                    return ret;
+                }
+                throw new NotImplementedException();
+            }
+
+            public byte[] Serialize()
+            {
+                byte[] entryCountBytes = BitConverter.GetBytes(Keys.Count);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(entryCountBytes);
+                entryCountBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(entryCountBytes));
+
+                List<string> bytesStringList = [];
+                foreach(EventAddress eventAddress in Keys)
+                {
+                    byte[] eventAddressBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(eventAddress.Serialize()));
+                    byte[] countBytes = BitConverter.GetBytes(this[eventAddress].Count);
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(countBytes);
+                    countBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(countBytes));
+
+                    List<string> bytesBytesStringsList = [];
+                    foreach (var bytesBytes in this[eventAddress])
+                    {
+                        bytesBytesStringsList.Add(Encoding.ASCII.GetString(Encoding.ASCII.GetBytes(Convert.ToBase64String(bytesBytes))));
+                    }
+                    byte[] bytesBytesString = Encoding.UTF8.GetBytes(String.Join("\0", [.. bytesBytesStringsList]));
+                    bytesBytesString = Encoding.ASCII.GetBytes(Convert.ToBase64String(bytesBytesString));
+
+                    byte[] bytesBytesStringLength = BitConverter.GetBytes(bytesBytesString.Length);
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(bytesBytesStringLength);
+                    bytesBytesStringLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(bytesBytesStringLength));
+
+                    byte[] bytes =
+                    [
+                        .. eventAddressBytes,
+                        .. new byte[1] { 0 },
+                        .. countBytes,
+                        .. new byte[1] { 0 },
+                        .. bytesBytesStringLength,
+                        .. new byte[1] { 0 },
+                        .. bytesBytesString,
+                        .. new byte[1] { 0 },
+                    ];
+
+                    bytesStringList.Add(Encoding.ASCII.GetString(Encoding.ASCII.GetBytes(Convert.ToBase64String(bytes))));
+                }
+                byte[] bytesString = Encoding.ASCII.GetBytes(Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join("\0", [.. bytesStringList]))));
+
+                byte[] bytesStringLength = BitConverter.GetBytes(bytesString.Length);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bytesStringLength);
+                bytesStringLength = Encoding.ASCII.GetBytes(Convert.ToBase64String(bytesStringLength));
+
+                byte[] retBytes = [.. entryCountBytes, .. new byte[1] { 0 }, .. bytesStringLength, .. new byte[1] { 0 }, .. bytesString, .. new byte[1] { 0 }];
+
+                return retBytes;
+            }
+        }
+
         public struct EventAddressRegisterOverride(string registerName, ulong value) : ISerializable
         {
             public string Register = registerName ?? throw new ArgumentNullException(nameof(registerName)); // actually an 8 byte ascii string
@@ -87,7 +239,7 @@ namespace GameHook.Infrastructure
             }
         }
 
-        public class EventAddress(string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size, bool instantaneous) : ISerializable
+        public class EventAddress(ulong serialNumber, string? name, bool active, long address, ushort bank, EventType eventType, IEnumerable<EventAddressRegisterOverride> eventAddressRegisterOverrides, string? bits, int length, int size, bool instantaneous) : ISerializable
         {
             public bool Active = active;
             public long Address = address;
@@ -99,13 +251,18 @@ namespace GameHook.Infrastructure
             public int Size = (size > 0) ? size : 1;
             public string Name = name ?? "";
             public bool Instantaneous = instantaneous;
+            public ulong SerialNumber = serialNumber;
 
-            public EventAddress() : this(null, false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0, false)
+            public EventAddress() : this(0, null, false, 0x00, ushort.MaxValue, EventType.EventType_Undefined, new List<EventAddressRegisterOverride> { }, null, 1, 0, false)
             {
             }
 
             public byte[] Serialize()
             {
+                byte[] serialNumberBytes = BitConverter.GetBytes(SerialNumber);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(serialNumberBytes);
+                serialNumberBytes = Encoding.ASCII.GetBytes(Convert.ToBase64String(serialNumberBytes));
                 byte[] activeBytes = BitConverter.GetBytes(Active);
                 if (!BitConverter.IsLittleEndian)
                     Array.Reverse(activeBytes);
@@ -148,6 +305,8 @@ namespace GameHook.Infrastructure
 
                 byte[] res =
                 [
+                    .. serialNumberBytes,
+                    .. new byte[1] { 0 },
                     .. activeBytes,
                     .. new byte[1] { 0 },
                     .. addressBytes,
@@ -181,12 +340,12 @@ namespace GameHook.Infrastructure
                     throw new ArgumentNullException(nameof(bytes));
                 else if (bytes.Length < sizeof(int))
                     throw new ArgumentOutOfRangeException(nameof(bytes));
-                else if (bytes.Where(b => b == 0).Count() != 11)
+                else if (bytes.Where(b => b == 0).Count() != 12)
                     throw new ArgumentOutOfRangeException(nameof(bytes));
                 else
                 {
                     byte[][] segments = bytes.Split([(byte)0]);
-                    if (segments.Length != 11)
+                    if (segments.Length != 12)
                         throw new ArgumentOutOfRangeException(nameof(bytes));
                     byte[] lenBytes = Convert.FromBase64String(Encoding.ASCII.GetString(segments[0]));
                     if (!BitConverter.IsLittleEndian)
@@ -201,19 +360,26 @@ namespace GameHook.Infrastructure
                         + segments[7].Length + 1
                         + segments[8].Length + 1
                         + segments[9].Length + 1
-                        + segments[10].Length)
+                        + segments[10].Length + 1
+                        + segments[11].Length)
                         throw new ArgumentOutOfRangeException(nameof(bytes));
 
-                    byte[] activeBytes = segments[1];
-                    byte[] addressBytes = segments[2];
-                    byte[] bankBytes = segments[3];
-                    byte[] eventTypeBytes = segments[4];
-                    byte[] eventAddressRegisterOverridesBytes = segments[5];
-                    byte[] bitsBytes = segments[6];
-                    byte[] lengthBytes = segments[7];
-                    byte[] sizeBytes = segments[8];
-                    byte[] nameBytes = segments[9];
-                    byte[] instantaneousBytes = segments[10];
+                    byte[] serialNumberBytes = segments[1];
+                    byte[] activeBytes = segments[2];
+                    byte[] addressBytes = segments[3];
+                    byte[] bankBytes = segments[4];
+                    byte[] eventTypeBytes = segments[5];
+                    byte[] eventAddressRegisterOverridesBytes = segments[6];
+                    byte[] bitsBytes = segments[7];
+                    byte[] lengthBytes = segments[8];
+                    byte[] sizeBytes = segments[9];
+                    byte[] nameBytes = segments[10];
+                    byte[] instantaneousBytes = segments[11];
+
+                    serialNumberBytes = Convert.FromBase64String(Encoding.ASCII.GetString(serialNumberBytes));
+                    if (!BitConverter.IsLittleEndian)
+                        Array.Reverse(serialNumberBytes);
+                    ulong serialNumber = BitConverter.ToUInt64(serialNumberBytes, 0);
 
                     activeBytes = Convert.FromBase64String(Encoding.ASCII.GetString(activeBytes));
                     if (!BitConverter.IsLittleEndian)
@@ -246,7 +412,7 @@ namespace GameHook.Infrastructure
                     int eventAddressRegisterOverridesLength = BitConverter.ToInt32(eventAddressRegisterOverridesLengthBytes, 0);
 
                     EventAddressRegisterOverride[] eventAddressRegisterOverrides;
-                    if (eventAddressRegisterOverridesLength == 0 && eventAddressRegisterOverridesStrings.Length > 0)
+                    if (eventAddressRegisterOverridesLength == 0 && eventAddressRegisterOverridesStrings.Length != 1)
                         throw new ArgumentOutOfRangeException(nameof(bytes));
                     else
                     {
@@ -277,7 +443,7 @@ namespace GameHook.Infrastructure
                         Array.Reverse(instantaneousBytes);
                     bool instantaneous = BitConverter.ToBoolean(instantaneousBytes, 0);
 
-                    return new EventAddress(name, active, address, bank, eventType, eventAddressRegisterOverrides, bits, length, size, instantaneous);
+                    return new EventAddress(serialNumber, name, active, address, bank, eventType, eventAddressRegisterOverrides, bits, length, size, instantaneous);
                 }
                 throw new NotImplementedException();
             }

@@ -3,11 +3,9 @@ using BizHawk.Client.EmuHawk;
 using BizHawk.Common;
 using BizHawk.Common.StringExtensions;
 using BizHawk.Emulation.Common;
-using BizHawk.Emulation.Cores.Computers.AppleII;
 using BizHawk.Emulation.Cores.Nintendo.Gameboy;
 using BizHawk.Emulation.Cores.Nintendo.GBHawk;
 using BizHawk.Emulation.Cores.Nintendo.Sameboy;
-using BizHawk.Emulation.Cores.Nintendo.SNES;
 using GameHook.Integrations.BizHawk;
 using System;
 using System.Collections;
@@ -15,11 +13,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 using System.Windows.Forms;
-using static BizHawk.Emulation.Cores.Nintendo.GBA.LibmGBA;
 using static GameHook.Integrations.BizHawk.BizHawkInterface;
 using static GameHookIntegration.SharedPlatformConstants;
 using static GameHookIntegration.SharedPlatformConstants.PlatformMapper;
@@ -29,29 +24,6 @@ namespace GameHookIntegration;
 [ExternalTool("GameHook.Integrations.BizHawk")]
 public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternalToolForm, IDisposable
 {
-    private static void Fill<T>(T[] array, T value, int startIndex, int count)
-    {
-        if (array == null)
-        {
-            throw new ArgumentNullException(nameof(array));
-        }
-
-        if ((uint)startIndex > (uint)array.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(array), "Index must be less then array length.");
-        }
-
-        if ((uint)count > (uint)(array.Length - startIndex))
-        {
-            throw new ArgumentOutOfRangeException(nameof(array), "count plus start index must be less then or equal to array length");
-        }
-
-        for (int i = startIndex; i < startIndex + count; i++)
-        {
-            array[i] = value;
-        }
-    }
-
     public ApiContainer? APIs { get; set; }
 
     [OptionalService]
@@ -82,12 +54,17 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     private IDictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry> scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
     private SharedPlatformConstants.PlatformMapper? Mapper = null;
     private Queue<EventOperation> eventOperationsQueue = new();
-    private Queue<WriteCall> writeCallsQueue = new();
+    private readonly Queue<WriteCall> writeCallsQueue = new();
 
     private readonly Dictionary<MemoryDomain, Dictionary<long, byte>> InstantWriteMap;
+    private IDictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>> InstantReadCurStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+    private IDictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>> InstantReadNewStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+    private InstantReadEvents InstantReadValues = new();
+    private bool InstantReadValuesSet = false;
 
     private readonly PipeServer<EventOperation>? eventsPipe;
     private readonly PipeServer<WriteCall>? writeCallsPipe = null;
+    private readonly PipeServer<InstantReadEvents>? instantReadValuesPipe = null;
 
     private byte[] DataBuffer { get; } = new byte[SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE];
 
@@ -127,6 +104,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
         writeCallsPipe = new("GAMEHOOK_BIZHAWK_WRITE.pipe", x => WriteCall.Deserialize(x));
         writeCallsPipe.PipeReadEvent += OnWriteRead;
+
+        instantReadValuesPipe = new("GAMEHOOK_BIZHAWK_INSTANT_READ.pipe", x => InstantReadEvents.Deserialize(x));
+        InstantReadValuesSet = false;
+
+        Log.EnableDomain("Info");
+        Log.EnableDomain("Debug");
     }
 
     private void OnWriteRead(object sender, PipeBase<WriteCall>.PipeReadArgs e)
@@ -159,6 +142,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     Debuggable?.MemoryCallbacks?.Clear();
                     GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
                     GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+                    InstantReadCurStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+                    InstantReadNewStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+                    InstantReadValues = new();
+                    InstantReadValuesSet = false;
                     break;
                 }
             case EventOperationType.EventOperationType_Add:
@@ -175,13 +162,14 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                         throw new NullReferenceException(nameof(serial));
                     ulong serialValue = serial.Value;
                     EventAddress ev = e.EventAddress;
+                    bool instantaneous = ev.Instantaneous;
                     if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
                     {
                         if ((ev.EventType & EventType.EventType_HardReset) != 0)
                         {
                             HardReset = new HardResetCallbackDelegate(() =>
                             {
-                                Console.Out.WriteLine($"_hardreset");
+                                Log.Note("Info", $"_hardreset");
                                 return;
                             });
                         }
@@ -189,7 +177,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                         {
                             SoftReset = new SoftResetCallbackDelegate(() =>
                             {
-                                Console.Out.WriteLine($"_softreset");
+                                Log.Note("Info", $"_softreset");
                                 return;
                             });
                         }
@@ -251,10 +239,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                         breakAddresses = breakAddresses.Distinct().ToList();
                         breakAddresses.Sort();
 
-                        Console.Out.WriteLine("breakAddresses:");
+                        Log.Note("Debug", "breakAddresses:");
                         foreach (var breakAddress in breakAddresses)
                         {
-                            Console.Out.WriteLine(breakAddress);
+                            Log.Note("Debug", $"0x{breakAddress:X}");
                         }
 
                         // group each events by address.
@@ -298,14 +286,36 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                             }
                         }
 
+                        if (instantaneous)
+                        {
+                            if (!InstantReadCurStateMap.ContainsKey(ev))
+                            {
+                                InstantReadCurStateMap.Add(ev, new Dictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>());
+                                InstantReadNewStateMap.Add(ev, new Dictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>());
+                            }
+                            if(!InstantReadValues.ContainsKey(ev))
+                            {
+                                InstantReadValues.Add(ev, new List<byte[]>());
+                            }
+                        }
+
                         // setup callbacks for addressess.
                         foreach (var breakAddressTypeBankEventAddress in breakAddressessTypeBankEventAddressess)
                         {
                             bool found = false;
                             var address = breakAddressTypeBankEventAddress.Key;
 
+                            if (instantaneous)
+                            {
+                                if (!InstantReadCurStateMap[ev].ContainsKey(address))
+                                    InstantReadCurStateMap[ev].Add(address, new Dictionary<MemoryDomain, IDictionary<long, byte>>());
+                                if (!InstantReadNewStateMap[ev].ContainsKey(address))
+                                    InstantReadNewStateMap[ev].Add(address, new Dictionary<MemoryDomain, IDictionary<long, byte>>());
+                            }
+
                             string identifierDomain = "";
                             long domainAddress = 0;
+                            MemoryDomain? identifierMemoryDomain = null;
                             Tuple<GetMapperBankDelegate?, string> GetMapperBankAndDomain = Mapper.GetBankFunctionAndCallbackDomain(Convert.ToUInt32(address));
                             string domain = GetMapperBankAndDomain.Item2;
                             GetMapperBankDelegate? GetBank = GetMapperBankAndDomain.Item1;
@@ -318,6 +328,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                 if (i != null && (i.BizhawkIdentifier == domain || i.BizhawkAlternateIdentifier == domain))
                                 {
                                     identifierDomain = Debuggable!.MemoryCallbacks.AvailableScopes.Contains(i.BizhawkIdentifier) ? i.BizhawkIdentifier : i.BizhawkAlternateIdentifier;
+                                    identifierMemoryDomain = MemoryDomains?[identifierDomain] ?? MemoryDomains?[identifierDomain] ?? throw new Exception("unsupported adress");
                                     found = true;
                                     domainAddress = address - i.PhysicalStartingAddress;
                                 }
@@ -326,6 +337,28 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                             {
                                 throw new Exception($"Unsupported memory address 0x{address:X}");
                             }
+                            else if(identifierMemoryDomain == null)
+                            {
+                                throw new Exception($"Unsupported memory address 0x{address:X}");
+                            }
+
+                            if (instantaneous)
+                            {
+                                if (!InstantReadCurStateMap[ev][address].ContainsKey(identifierMemoryDomain))
+                                    InstantReadCurStateMap[ev][address].Add(identifierMemoryDomain, new Dictionary<long, byte>());
+                                if (!InstantReadNewStateMap[ev][address].ContainsKey(identifierMemoryDomain))
+                                    InstantReadNewStateMap[ev][address].Add(identifierMemoryDomain, new Dictionary<long, byte>());
+                                byte value = identifierMemoryDomain.PeekByte(domainAddress);
+                                if (!InstantReadCurStateMap[ev][address][identifierMemoryDomain].ContainsKey(domainAddress))
+                                    InstantReadCurStateMap[ev][address][identifierMemoryDomain].Add(domainAddress, value);
+                                else
+                                    InstantReadCurStateMap[ev][address][identifierMemoryDomain][domainAddress] = value;
+                                if (!InstantReadNewStateMap[ev][address][identifierMemoryDomain].ContainsKey(domainAddress))
+                                    InstantReadNewStateMap[ev][address][identifierMemoryDomain].Add(domainAddress, value);
+                                else
+                                    InstantReadNewStateMap[ev][address][identifierMemoryDomain][domainAddress] = value;
+                            }
+
                             foreach (var eventTypeEventAddresses in breakAddressTypeBankEventAddress.Value)
                             {
                                 foreach (var eventType in breakMemoryCallbacks)
@@ -338,7 +371,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                     {
                                         GameHook_EventCallbacks[ev].Add(evEventType, Array.Empty<IMemoryCallback>());
                                     }
-                                    Console.WriteLine($"Adding event --> {address:X}, {eventType}: BizHawkGameHook_{address:X}_{eventType}.");
+                                    Log.Note("Info", $"Adding event --> {address:X}, {eventType}: BizHawkGameHook_{address:X}_{eventType}.");
                                     IMemoryCallback callback = new MemoryCallback(identifierDomain,
                                                             eventType,
                                                             $"BizHawkGameHook_{address:X}_{eventType}",
@@ -356,17 +389,17 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                             {
                                                                                 foreach (var i in overrides)
                                                                                 {
-                                                                                    Console.Out.WriteLine($"Overriding: {i.Item1} with 0x{i.Item2:X}");
+                                                                                    Log.Note("Debug", $"Overriding: {i.Item1} with 0x{i.Item2:X}");
                                                                                     Debuggable.SetCpuRegister(i.Item1, i.Item2);
                                                                                 }
                                                                             }
                                                                             if (eventType == MemoryCallbackType.Execute)
                                                                             {
-                                                                                Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
                                                                             }
                                                                             else if (eventType == MemoryCallbackType.Read)
                                                                             {
-                                                                                Console.Out.WriteLine($"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
                                                                                 byte newByte = 0;
 
                                                                                 MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
@@ -377,7 +410,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                     if (eventBits != null && eventBits.Length > 0)
                                                                                     {
                                                                                         byte oldByte = domain!.PeekByte(domainAddress);
-                                                                                        Console.WriteLine($"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
+                                                                                        Log.Note("Debug", $"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
 
                                                                                         var inputBits = new BitArray(new byte[] { newByte });
                                                                                         var outputBits = new BitArray(new byte[] { oldByte });
@@ -390,8 +423,106 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                         outputBits.CopyTo(newByteContainer, 0);
                                                                                         newByte = newByteContainer[0];
                                                                                     }
-                                                                                    Console.WriteLine($"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
+                                                                                    Log.Note("Debug", $"newByte: {newByte:X}, domainAddress: {domainAddress:X}");
                                                                                     domain!.PokeByte(domainAddress, newByte);
+                                                                                }
+                                                                            }
+                                                                            else if(eventType == MemoryCallbackType.Write)
+                                                                            {
+                                                                                Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+
+                                                                                if (instantaneous)
+                                                                                {
+                                                                                    uint newValue = value;
+                                                                                    byte newByte = Convert.ToByte(newValue);
+
+                                                                                    MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
+                                                                                    if (eventBits != null && eventBits.Length > 0)
+                                                                                    {
+                                                                                        byte oldByte = domain!.PeekByte(domainAddress);
+                                                                                        Log.Note("Debug", $"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
+
+                                                                                        var inputBits = new BitArray(new byte[] { newByte });
+                                                                                        var outputBits = new BitArray(new byte[] { oldByte });
+
+                                                                                        foreach (var x in eventBits)
+                                                                                        {
+                                                                                            outputBits[x] = inputBits[x];
+                                                                                        }
+                                                                                        byte[] newByteContainer = new byte[1];
+                                                                                        outputBits.CopyTo(newByteContainer, 0);
+                                                                                        newByte = newByteContainer[0];
+                                                                                    }
+                                                                                    Log.Note("Debug", $"INSTANTANEOUS READ: newByte: {newByte:X}, domainAddress: {domainAddress:X}");
+                                                                                    byte curState = InstantReadCurStateMap[ev][address][identifierMemoryDomain][domainAddress];
+                                                                                    byte newState = InstantReadNewStateMap[ev][address][identifierMemoryDomain][domainAddress];
+
+                                                                                    if(curState != newState)
+                                                                                    {
+                                                                                        var addressess = InstantReadNewStateMap[ev].Keys.OrderBy(x => x).ToArray();
+                                                                                        // if we are trying to rewrite the same byte twice, then these are new values.
+                                                                                        if (newState != newByte)
+                                                                                        {
+                                                                                            // rewriting the same byte more then once, the value structure has changed record it to the
+                                                                                            // list of changes this frame.
+                                                                                            List<byte> curValue = new();
+                                                                                            
+                                                                                            foreach (var curAddress in addressess)
+                                                                                            {
+                                                                                                foreach (var domainAddressValue in InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain])
+                                                                                                {
+                                                                                                    var curDomainAddress = domainAddressValue.Key;
+                                                                                                    var curDomainValue = domainAddressValue.Value;
+                                                                                                    curValue.Add(curDomainValue);
+                                                                                                }
+                                                                                            }
+                                                                                            InstantReadValues[ev].Add(curValue.ToArray());
+                                                                                            foreach (var curAddress in addressess)
+                                                                                            {
+                                                                                                var domainAddressess = InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain].Keys;
+                                                                                                foreach (var curDomainAddress in domainAddressess)
+                                                                                                {
+                                                                                                    InstantReadCurStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress] = InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress];
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        InstantReadCurStateMap[ev][address][identifierMemoryDomain][domainAddress] = newByte;
+                                                                                        InstantReadNewStateMap[ev][address][identifierMemoryDomain][domainAddress] = newByte;
+                                                                                        // if all values are changed then this is a new value.
+                                                                                        bool allChanged = true;
+                                                                                        foreach (var curAddress in addressess)
+                                                                                        {
+                                                                                            foreach (var curDomainAddress in InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain].Keys)
+                                                                                            {
+                                                                                                if (InstantReadCurStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress] != InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress])
+                                                                                                {
+                                                                                                    allChanged = false;
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        if(allChanged)
+                                                                                        {
+                                                                                            List<byte> curValue = new();
+                                                                                            foreach (var curAddress in addressess)
+                                                                                            {
+                                                                                                foreach (var domainAddressValue in InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain])
+                                                                                                {
+                                                                                                    var curDomainAddress = domainAddressValue.Key;
+                                                                                                    var curDomainValue = domainAddressValue.Value;
+                                                                                                    curValue.Add(curDomainValue);
+                                                                                                }
+                                                                                            }
+                                                                                            InstantReadValues[ev].Add(curValue.ToArray());
+                                                                                            foreach (var curAddress in addressess)
+                                                                                            {
+                                                                                                var domainAddressess = InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain].Keys;
+                                                                                                foreach (var curDomainAddress in domainAddressess)
+                                                                                                {
+                                                                                                    InstantReadCurStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress] = InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain][curDomainAddress];
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -463,6 +594,13 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     GameHook_SerialToEvent[serialValue].Remove(evEventType);
                     if (GameHook_SerialToEvent[serialValue].Count <= 0)
                         GameHook_SerialToEvent.Remove(serialValue);
+
+                    if (ev.Instantaneous)
+                    {
+                        InstantReadCurStateMap.Remove(ev);
+                        InstantReadNewStateMap.Remove(ev);
+                        InstantReadValues.Remove(ev);
+                    }
                     break;
                 }
             default:
@@ -535,25 +673,25 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             return;
         }
 
-        Console.Out.WriteLine("Callback domains:");
+        Log.Note("Debug", "Callback domains:");
         if(Debuggable != null && Debuggable.MemoryCallbacks != null && Debuggable.MemoryCallbacks.AvailableScopes != null)
         {
             foreach(var i in Debuggable.MemoryCallbacks.AvailableScopes)
             {
-                Console.Out.WriteLine($"scope: {i}");
+                Log.Note("Debug", $"scope: {i}");
             }
         }
         foreach(var i in MemoryDomains)
         {
             if (i != null)
             {
-                Console.Out.WriteLine($"domain: {i.Name}");
-                Console.Out.WriteLine($"size: 0x{i.Size:X}");
+                Log.Note("Debug", $"domain: {i.Name}");
+                Log.Note("Debug", $"size: 0x{i.Size:X}");
             }
         }
         foreach(var i in Debuggable?.GetCpuFlagsAndRegisters() ?? new Dictionary<string, RegisterValue>())
         {
-            Console.Out.WriteLine(i.Key + ":" + i.Value.Value.ToString());
+            Log.Note("Debug", i.Key + ":" + i.Value.Value.ToString());
         }
 
         var data = new byte[SharedPlatformConstants.BIZHAWK_METADATA_PACKET_SIZE];
@@ -596,6 +734,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         }
         GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
         GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+        InstantReadCurStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+        InstantReadNewStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
+        InstantReadValues = new();
+        InstantReadValuesSet = false;
         eventOperationsQueue = new();
 
         if (BoardInfo != null && BoardInfo.BoardName != null && Platform != null &&
@@ -604,14 +746,14 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
             var boardName = BoardInfo.BoardName;
             var mapper = Platform.GetMapper(Platform, Emulator, MemoryDomains, Debuggable, boardName);
 
-            Console.Out.WriteLine($"BoardInfo: {boardName}");
+            Log.Note("Info", $"BoardInfo: {boardName}");
             if (mapper != null && mapper.GetMapperName != null)
             {
-                Console.Out.WriteLine($"Mapper: {mapper.GetMapperName()}");
+                Log.Note("Info", $"Mapper: {mapper.GetMapperName()}");
             }
             else
             {
-                Console.Out.WriteLine($"Mapper: null");
+                Log.Note("Info", $"Mapper: null");
             }
 
             if (mapper != null)
@@ -638,12 +780,169 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
         lock (GameHook_EventLock)
         {
+            // check for uncommitted diffs, and add a value for them.
+            foreach(EventAddress eventAddress in InstantReadCurStateMap.Keys)
+            {
+                bool hasDiffs = false;
+                long[] addressess = InstantReadCurStateMap[eventAddress].Keys.OrderBy(x => x).ToArray();
+                foreach (long address in addressess)
+                {
+                    foreach(MemoryDomain domain in InstantReadCurStateMap[eventAddress][address].Keys)
+                    {
+                        foreach(long domainAddress in InstantReadCurStateMap[eventAddress][address][domain].Keys)
+                        {
+                            if (InstantReadCurStateMap[eventAddress][address][domain][domainAddress] != InstantReadNewStateMap[eventAddress][address][domain][domainAddress])
+                            {
+                                hasDiffs = true;
+                                break;
+                            }
+                        }
+                        if(hasDiffs)
+                        {
+                            break;
+                        }
+                    }
+                    if(hasDiffs)
+                    {
+                        break;
+                    }
+                }
+                if(hasDiffs)
+                {
+                    // assemble a value and replace cur state with new state.
+                    List<byte> curValue = new();
+                    foreach (var curAddress in addressess)
+                    {
+                        MemoryDomain[] memoryDomains = InstantReadCurStateMap[eventAddress][curAddress].Keys.ToArray();
+                        foreach (var domainAddressValue in InstantReadNewStateMap[eventAddress][curAddress][memoryDomains.First()])
+                        {
+                            var curDomainAddress = domainAddressValue.Key;
+                            var curDomainValue = domainAddressValue.Value;
+                            curValue.Add(curDomainValue);
+                        }
+                    }
+                    InstantReadValues[eventAddress].Add(curValue.ToArray());
+                    foreach (var curAddress in addressess)
+                    {
+                        MemoryDomain[] memoryDomains = InstantReadCurStateMap[eventAddress][curAddress].Keys.ToArray();
+                        foreach (MemoryDomain memoryDomain in memoryDomains)
+                        {
+                            var domainAddressess = InstantReadNewStateMap[eventAddress][curAddress][memoryDomain].Keys;
+                            foreach (var curDomainAddress in domainAddressess)
+                            {
+                                InstantReadCurStateMap[eventAddress][curAddress][memoryDomain][curDomainAddress] = InstantReadNewStateMap[eventAddress][curAddress][memoryDomain][curDomainAddress];
+                            }
+                        }
+                    }
+                }
+            }
+            // check for diffs that didn't get a callback event (should not happen.)
+            foreach (EventAddress eventAddress in InstantReadCurStateMap.Keys)
+            {
+                bool hasDiffs = false;
+                long[] addressess = InstantReadCurStateMap[eventAddress].Keys.OrderBy(x => x).ToArray();
+                foreach (long address in addressess)
+                {
+                    foreach (MemoryDomain domain in InstantReadCurStateMap[eventAddress][address].Keys)
+                    {
+                        foreach (long domainAddress in InstantReadCurStateMap[eventAddress][address][domain].Keys)
+                        {
+                            byte newByte = domain.PeekByte(domainAddress);
+                            if (InstantReadNewStateMap[eventAddress][address][domain][domainAddress] != newByte)
+                            {
+                                hasDiffs = true;
+                                InstantReadNewStateMap[eventAddress][address][domain][domainAddress] = newByte;
+                            }
+                        }
+                    }
+                }
+                if (hasDiffs)
+                {
+                    // assemble a value and replace cur state with new state.
+                    List<byte> curValue = new();
+                    foreach (var curAddress in addressess)
+                    {
+                        MemoryDomain[] memoryDomains = InstantReadCurStateMap[eventAddress][curAddress].Keys.ToArray();
+                        foreach (var domainAddressValue in InstantReadNewStateMap[eventAddress][curAddress][memoryDomains.First()])
+                        {
+                            var curDomainAddress = domainAddressValue.Key;
+                            var curDomainValue = domainAddressValue.Value;
+                            curValue.Add(curDomainValue);
+                        }
+                    }
+                    InstantReadValues[eventAddress].Add(curValue.ToArray());
+                }
+            }
+        }
+
+        // add and delete events.
+        lock (GameHook_EventLock)
+        {
             EventOperation e;
             while(eventOperationsQueue.Count > 0)
             {
                 e = eventOperationsQueue.Dequeue();
                 ProcessEventOperation(e);
             }
+        }
+
+        // write the previous frame's events for the remaining events to the pipe.
+        lock (GameHook_EventLock)
+        {
+            if (InstantReadValuesSet && InstantReadValues.Keys.Count > 0 && InstantReadValues.Values.Any(x => x.Count > 0))
+            {
+                instantReadValuesPipe.Write(InstantReadValues);
+                EventAddress[] keys = InstantReadValues.Keys.ToArray();
+                InstantReadValues = new();
+                foreach (EventAddress key in keys)
+                {
+                    InstantReadValues.Add(key, new List<byte[]>());
+                }
+            }
+        }
+
+        lock (GameHook_EventLock)
+        {
+            // update hashes to match current values.
+            Tuple<EventAddress, long, MemoryDomain, long>[] InstantReadStateMapKeys = InstantReadCurStateMap
+                .Select(x => x.Value
+                    .Select(y => y.Value.Select(z => z.Value
+                        .Select(a => new Tuple<EventAddress, long, MemoryDomain, long>(x.Key, y.Key, z.Key, a.Key)
+                        ).ToArray()).SelectMany(x => x).ToArray()
+                    ).SelectMany(x => x).ToArray()
+                ).SelectMany(x => x).ToArray();
+            
+            foreach(var i in InstantReadStateMapKeys)
+            {
+                EventAddress eventAddress = i.Item1;
+                long address = i.Item2;
+                MemoryDomain memoryDomain = i.Item3;
+                long domainAddress = i.Item4;
+
+                byte newByte = memoryDomain.PeekByte(domainAddress);
+                InstantReadCurStateMap[eventAddress][address][memoryDomain][domainAddress] = InstantReadNewStateMap[eventAddress][address][memoryDomain][domainAddress] = newByte;
+            }
+
+            foreach (var i in InstantReadCurStateMap)
+            {
+                EventAddress eventAddress = i.Key;
+
+                // assemble a value and replace cur state with new state.
+                List<byte> curValue = new();
+                foreach (var j in i.Value)
+                {
+                    long curAddress = j.Key;
+                    MemoryDomain[] memoryDomains = j.Value.Keys.ToArray();
+                    foreach (var k in j.Value[memoryDomains.First()])
+                    {
+                        var curDomainAddress = k.Key;
+                        var curDomainValue = k.Value;
+                        curValue.Add(curDomainValue);
+                    }
+                }
+                InstantReadValues[eventAddress].Add(curValue.ToArray());
+            }
+            InstantReadValuesSet = true;
         }
 
         if (APIs!.Joypad != null)
@@ -911,7 +1210,7 @@ public static class SharedPlatformConstants
                 switch (mapper)
                 {
                     case MapperCamera cameraMapper:
-                        Console.WriteLine("camera: rom bank: " + cameraMapper.ROM_bank.ToString()
+                        Log.Note("Debug", "camera: rom bank: " + cameraMapper.ROM_bank.ToString()
                             + " ram bank: " + cameraMapper.RAM_bank.ToString()
                             + " ram enabled: " + cameraMapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -950,7 +1249,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperHuC1 huc1Mapper:
-                        Console.WriteLine("camera: rom bank: " + huc1Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "HUC1: rom bank: " + huc1Mapper.ROM_bank.ToString()
                             + " ram bank: " + huc1Mapper.RAM_bank.ToString()
                             + " ram enabled: " + huc1Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -989,7 +1288,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperHuC3 huc3Mapper:
-                        Console.WriteLine("camera: rom bank: " + huc3Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "HUC3: rom bank: " + huc3Mapper.ROM_bank.ToString()
                             + " ram bank: " + huc3Mapper.RAM_bank.ToString()
                             + " ram enabled: " + huc3Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1028,7 +1327,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC1 mbc1Mapper:
-                        Console.WriteLine("camera: rom bank: " + mbc1Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC1: rom bank: " + mbc1Mapper.ROM_bank.ToString()
                             + " ram bank: " + mbc1Mapper.RAM_bank.ToString()
                             + " ram enabled: " + mbc1Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1067,7 +1366,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC1Multi mbc1mMapper:
-                        Console.WriteLine("camera: rom bank: " + mbc1mMapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC1M: rom bank: " + mbc1mMapper.ROM_bank.ToString()
                             + " ram bank: " + mbc1mMapper.RAM_bank.ToString()
                             + " ram enabled: " + mbc1mMapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1106,7 +1405,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC2 mbc2Mapper:
-                        Console.WriteLine("camera: rom bank: " + mbc2Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC2: rom bank: " + mbc2Mapper.ROM_bank.ToString()
                             + " ram bank: " + mbc2Mapper.RAM_bank.ToString()
                             + " ram enabled: " + mbc2Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1145,7 +1444,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC3 mbc3Mapper:
-                        Console.WriteLine("camera: rom bank: " + mbc3Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC3: rom bank: " + mbc3Mapper.ROM_bank.ToString()
                             + " ram bank: " + mbc3Mapper.RAM_bank.ToString()
                             + " ram enabled: " + mbc3Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1184,7 +1483,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC5 mbc5Mapper:
-                        Console.WriteLine("camera: rom bank: " + mbc5Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC5: rom bank: " + mbc5Mapper.ROM_bank.ToString()
                             + " ram bank: " + mbc5Mapper.RAM_bank.ToString()
                             + " ram enabled: " + mbc5Mapper.RAM_enable.ToString());
                         return new PlatformMapper
@@ -1223,7 +1522,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperMBC7 mbc7Mapper:
-                        Console.WriteLine("camera: rom bank: " + mbc7Mapper.ROM_bank.ToString()
+                        Log.Note("Debug", "MBC7: rom bank: " + mbc7Mapper.ROM_bank.ToString()
                             + " ram 1 enabled: " + mbc7Mapper.RAM_enable_1.ToString()
                             + " ram 2 enabled: " + mbc7Mapper.RAM_enable_2.ToString());
                         return new PlatformMapper
@@ -1265,7 +1564,7 @@ public static class SharedPlatformConstants
                             }
                         };
                     case MapperRM8 mapperRM8:
-                        Console.WriteLine("camera: rom bank: " + mapperRM8.ROM_bank.ToString());
+                        Log.Note("Debug", "RM8: rom bank: " + mapperRM8.ROM_bank.ToString());
                         return new PlatformMapper
                         {
                             InitState = (thisObj, platform) => {
@@ -1298,275 +1597,226 @@ public static class SharedPlatformConstants
                                 return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                             }
                         };
-                //case MapperSachen1 mapperSachen1:
-                //    Console.WriteLine("camera: rom bank: " + mapperSachen1.ROM_bank.ToString()
-                //        + " BASE Rom Bank: " + mapperSachen1.BASE_ROM_Bank.ToString());
-                //    return new PlatformMapper
-                //    {
-                //        InitState = (thisObj, platform) => {
-                //            thisObj.Platform = platform;
-                //        },
-                //        GetMapperName = () => { return "Schn1"; },
-                //        InitMapperDetection = () =>
-                //        {
-                //        },
-                //        GetBankFunctionAndCallbackDomain = (address) =>
-                //        {
-                //            PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                //            if (platformMemoryLayoutEntry == null)
-                //            {
-                //                throw new Exception("unsupported address");
-                //            }
-                //            GetMapperBankDelegate? bankDelegate = null;
-                //            switch (platformMemoryLayoutEntry.BizhawkIdentifier)
-                //            {
-                //                case "ROM":
-                //                    if (address <= 0x3FFF)
-                //                    {
-                //                        bankDelegate = () => { return mapperSachen1.BASE_ROM_Bank; };
-                //                    }
-                //                    else
-                //                    {
-                //                        bankDelegate = () => { return mapperSachen1.ROM_bank; };
-                //                    }
-                //                    break;
-                //                default:
-                //                    bankDelegate = () => { return 0; };
-                //                    break;
-                //            }
-                //            return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                //        }
-                //    };
-                //case MapperSachen2 mapperSachen2:
-                //    Console.WriteLine("camera: rom bank: " + mapperSachen2.ROM_bank.ToString()
-                //        + " BASE Rom Bank: " + mapperSachen2.BASE_ROM_Bank.ToString());
-                //    return new PlatformMapper
-                //    {
-                //        InitState = (thisObj, platform) => {
-                //            thisObj.Platform = platform;
-                //        },
-                //        GetMapperName = () => { return "Schn2"; },
-                //        InitMapperDetection = () =>
-                //        {
-                //        },
-                //        GetBankFunctionAndCallbackDomain = (address) =>
-                //        {
-                //            PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
-                //            if (platformMemoryLayoutEntry == null)
-                //            {
-                //                throw new Exception("unsupported address");
-                //            }
-                //            GetMapperBankDelegate? bankDelegate = null;
-                //            switch (platformMemoryLayoutEntry.BizhawkIdentifier)
-                //            {
-                //                case "ROM":
-                //                    if (address <= 0x3FFF)
-                //                    {
-                //                        bankDelegate = () => { return mapperSachen2.BASE_ROM_Bank; };
-                //                    }
-                //                    else
-                //                    {
-                //                        bankDelegate = () => { return mapperSachen2.ROM_bank; };
-                //                    }
-                //                    break;
-                //                default:
-                //                    bankDelegate = () => { return 0; };
-                //                    break;
-                //            }
-                //            return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                //        }
-                //    };
-                case MapperTAMA5 mapperTAMA5:
-                        Console.WriteLine("camera: rom bank: " + mapperTAMA5.ROM_bank.ToString()
-                            + " ram bank: " + mapperTAMA5.RAM_bank.ToString());
-                        return new PlatformMapper
-                        {
-                            InitState = (thisObj, platform) => {
-                                thisObj.Platform = platform;
-                            },
-                            GetMapperName = () => { return "Bandai TAMA5"; },
-                            InitMapperDetection = () =>
+                    //case MapperSachen1 mapperSachen1:
+                    //    Log.Note("Debug", "Sachen1: rom bank: " + mapperSachen1.ROM_bank.ToString()
+                    //        + " BASE Rom Bank: " + mapperSachen1.BASE_ROM_Bank.ToString());
+                    //    return new PlatformMapper
+                    //    {
+                    //        InitState = (thisObj, platform) => {
+                    //            thisObj.Platform = platform;
+                    //        },
+                    //        GetMapperName = () => { return "Schn1"; },
+                    //        InitMapperDetection = () =>
+                    //        {
+                    //        },
+                    //        GetBankFunctionAndCallbackDomain = (address) =>
+                    //        {
+                    //            PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
+                    //            if (platformMemoryLayoutEntry == null)
+                    //            {
+                    //                throw new Exception("unsupported address");
+                    //            }
+                    //            GetMapperBankDelegate? bankDelegate = null;
+                    //            switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                    //            {
+                    //                case "ROM":
+                    //                    if (address <= 0x3FFF)
+                    //                    {
+                    //                        bankDelegate = () => { return mapperSachen1.BASE_ROM_Bank; };
+                    //                    }
+                    //                    else
+                    //                    {
+                    //                        bankDelegate = () => { return mapperSachen1.ROM_bank; };
+                    //                    }
+                    //                    break;
+                    //                default:
+                    //                    bankDelegate = () => { return 0; };
+                    //                    break;
+                    //            }
+                    //            return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                    //        }
+                    //    };
+                    //case MapperSachen2 mapperSachen2:
+                    //    Log.Note("Debug", "Sachen2: rom bank: " + mapperSachen2.ROM_bank.ToString()
+                    //        + " BASE Rom Bank: " + mapperSachen2.BASE_ROM_Bank.ToString());
+                    //    return new PlatformMapper
+                    //    {
+                    //        InitState = (thisObj, platform) => {
+                    //            thisObj.Platform = platform;
+                    //        },
+                    //        GetMapperName = () => { return "Schn2"; },
+                    //        InitMapperDetection = () =>
+                    //        {
+                    //        },
+                    //        GetBankFunctionAndCallbackDomain = (address) =>
+                    //        {
+                    //            PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address);
+                    //            if (platformMemoryLayoutEntry == null)
+                    //            {
+                    //                throw new Exception("unsupported address");
+                    //            }
+                    //            GetMapperBankDelegate? bankDelegate = null;
+                    //            switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                    //            {
+                    //                case "ROM":
+                    //                    if (address <= 0x3FFF)
+                    //                    {
+                    //                        bankDelegate = () => { return mapperSachen2.BASE_ROM_Bank; };
+                    //                    }
+                    //                    else
+                    //                    {
+                    //                        bankDelegate = () => { return mapperSachen2.ROM_bank; };
+                    //                    }
+                    //                    break;
+                    //                default:
+                    //                    bankDelegate = () => { return 0; };
+                    //                    break;
+                    //            }
+                    //            return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                    //        }
+                    //    };
+                    case MapperTAMA5 mapperTAMA5:
+                            Log.Note("Debug", "TAMA5: rom bank: " + mapperTAMA5.ROM_bank.ToString()
+                                + " ram bank: " + mapperTAMA5.RAM_bank.ToString());
+                            return new PlatformMapper
                             {
-                            },
-                            GetBankFunctionAndCallbackDomain = (address) =>
-                            {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                                GetMapperBankDelegate? bankDelegate = null;
-                                switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                InitState = (thisObj, platform) => {
+                                    thisObj.Platform = platform;
+                                },
+                                GetMapperName = () => { return "Bandai TAMA5"; },
+                                InitMapperDetection = () =>
                                 {
-                                    case "ROM":
-                                        if (address <= 0x3FFF)
-                                        {
+                                },
+                                GetBankFunctionAndCallbackDomain = (address) =>
+                                {
+                                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                                    GetMapperBankDelegate? bankDelegate = null;
+                                    switch (platformMemoryLayoutEntry.BizhawkIdentifier)
+                                    {
+                                        case "ROM":
+                                            if (address <= 0x3FFF)
+                                            {
+                                                bankDelegate = () => { return 0; };
+                                            }
+                                            else
+                                            {
+                                                bankDelegate = () => { return mapperTAMA5.ROM_bank; };
+                                            }
+                                            break;
+                                        case "CartRAM":
+                                            bankDelegate = () => { return mapperTAMA5.RAM_bank; };
+                                            break;
+                                        default:
                                             bankDelegate = () => { return 0; };
-                                        }
-                                        else
-                                        {
-                                            bankDelegate = () => { return mapperTAMA5.ROM_bank; };
-                                        }
-                                        break;
-                                    case "CartRAM":
-                                        bankDelegate = () => { return mapperTAMA5.RAM_bank; };
-                                        break;
-                                    default:
-                                        bankDelegate = () => { return 0; };
-                                        break;
+                                            break;
+                                    }
+                                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
                                 }
-                                return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                            }
-                        };
-                    case MapperWT mapperWT:
-                        Console.WriteLine("camera: rom bank: " + mapperWT.ROM_bank.ToString());
-                        return new PlatformMapper
-                        {
-                            InitState = (thisObj, platform) => {
-                                thisObj.Platform = platform;
-                            },
-                            GetMapperName = () => { return "Wisdom Tree"; },
-                            InitMapperDetection = () =>
+                            };
+                        case MapperWT mapperWT:
+                            Log.Note("Debug", "WT: rom bank: " + mapperWT.ROM_bank.ToString());
+                            return new PlatformMapper
                             {
-                            },
-                            GetBankFunctionAndCallbackDomain = (address) =>
-                            {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                                GetMapperBankDelegate? bankDelegate = null;
-                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                InitState = (thisObj, platform) => {
+                                    thisObj.Platform = platform;
+                                },
+                                GetMapperName = () => { return "Wisdom Tree"; },
+                                InitMapperDetection = () =>
                                 {
-                                    "ROM" => () => { return mapperWT.ROM_bank; }
-
-                                    ,
-                                    _ => () => { return 0; }
-
-                                    ,
-                                };
-                                return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                            }
-                        };
-                    case MapperDefault:
-                        return new PlatformMapper
-                        {
-                            InitState = (thisObj, platform) => {
-                                thisObj.Platform = platform;
-                            },
-                            GetMapperName = () => { return "No Mapper"; },
-                            InitMapperDetection = () =>
-                            {
-                            },
-                            GetBankFunctionAndCallbackDomain = (address) =>
-                            {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                                GetMapperBankDelegate? bankDelegate = null;
-                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                },
+                                GetBankFunctionAndCallbackDomain = (address) =>
                                 {
-                                    _ => () => { return 0; }
+                                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                                    GetMapperBankDelegate? bankDelegate = null;
+                                    bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                    {
+                                        "ROM" => () => { return mapperWT.ROM_bank; }
 
-                                    ,
-                                };
-                                return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                            }
-                        };
-                    case MapperMBC6:
-                        return new PlatformMapper
-                        {
-                            InitState = (thisObj, platform) => {
-                                thisObj.Platform = platform;
-                            },
-                            GetMapperName = () => { return "MBC6"; },
-                            InitMapperDetection = () =>
+                                        ,
+                                        _ => () => { return 0; }
+
+                                        ,
+                                    };
+                                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                                }
+                            };
+                        case MapperDefault:
+                            return new PlatformMapper
                             {
-                            },
-                            GetBankFunctionAndCallbackDomain = (address) =>
-                            {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                                GetMapperBankDelegate? bankDelegate = null;
-                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                InitState = (thisObj, platform) => {
+                                    thisObj.Platform = platform;
+                                },
+                                GetMapperName = () => { return "No Mapper"; },
+                                InitMapperDetection = () =>
                                 {
-                                    _ => () => { return 0; }
-
-                                    ,
-                                };
-                                return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                            }
-                        };
-                    case MapperMMM01:
-                        return new PlatformMapper
-                        {
-                            InitState = (thisObj, platform) => {
-                                thisObj.Platform = platform;
-                            },
-                            GetMapperName = () => { return "MMM01"; },
-                            InitMapperDetection = () =>
-                            {
-                            },
-                            GetBankFunctionAndCallbackDomain = (address) =>
-                            {
-                                PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                                GetMapperBankDelegate? bankDelegate = null;
-                                bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                },
+                                GetBankFunctionAndCallbackDomain = (address) =>
                                 {
-                                    _ => () => { return 0; }
+                                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                                    GetMapperBankDelegate? bankDelegate = null;
+                                    bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                    {
+                                        _ => () => { return 0; }
 
-                                    ,
-                                };
-                                return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
-                            }
-                        };
-                    default:
-                        throw new Exception("unknown mapper.");
+                                        ,
+                                    };
+                                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                                }
+                            };
+                        case MapperMBC6:
+                            return new PlatformMapper
+                            {
+                                InitState = (thisObj, platform) => {
+                                    thisObj.Platform = platform;
+                                },
+                                GetMapperName = () => { return "MBC6"; },
+                                InitMapperDetection = () =>
+                                {
+                                },
+                                GetBankFunctionAndCallbackDomain = (address) =>
+                                {
+                                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                                    GetMapperBankDelegate? bankDelegate = null;
+                                    bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                    {
+                                        _ => () => { return 0; }
+
+                                        ,
+                                    };
+                                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                                }
+                            };
+                        case MapperMMM01:
+                            return new PlatformMapper
+                            {
+                                InitState = (thisObj, platform) => {
+                                    thisObj.Platform = platform;
+                                },
+                                GetMapperName = () => { return "MMM01"; },
+                                InitMapperDetection = () =>
+                                {
+                                },
+                                GetBankFunctionAndCallbackDomain = (address) =>
+                                {
+                                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
+                                    GetMapperBankDelegate? bankDelegate = null;
+                                    bankDelegate = platformMemoryLayoutEntry.BizhawkIdentifier switch
+                                    {
+                                        _ => () => { return 0; }
+
+                                        ,
+                                    };
+                                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "System Bus");
+                                }
+                            };
+                        default:
+                            throw new Exception("unknown mapper.");
                 }
             }
             else
             {
                 throw new Exception("unknown mapper.");
             }
-        }
-        else if (emulator != null && emulator is LibsnesCore core && memoryDomains != null && memoryDomains.Count() > 0)
-        {
-            return new PlatformMapper
-            {
-                InitState = (thisObj, platform) => {
-                    thisObj.Platform = platform;
-                },
-                GetMapperName = () => {
-                    return core.Api.GameboyMapper.ToString();
-                },
-                InitMapperDetection = () =>
-                {
-                },
-                GetBankFunctionAndCallbackDomain = (address) =>
-                {
-                    PlatformMemoryLayoutEntry? platformMemoryLayoutEntry = platform.FindMemoryLayout(address) ?? throw new Exception("unsupported address");
-                    GetMapperBankDelegate? bankDelegate = null;
-                    switch (platformMemoryLayoutEntry.BizhawkIdentifier)
-                    {
-                        case "ROM":
-                            if (address <= 0x3FFF)
-                            {
-                                bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["ROM0 BANK"]); };
-                            }
-                            else
-                            {
-                                bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["ROMX BANK"]); };
-                            }
-                            break;
-                        case "VRAM":
-                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["VRAM BANK"]); };
-                            break;
-                        case "CartRAM":
-                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["SRAM BANK"]); };
-                            break;
-                        case "WRAM":
-                            bankDelegate = () => { return Convert.ToInt32(core.GetBanks()["WRAM BANK"]); };
-                            break;
-                        default:
-                            bankDelegate = () => { return 0xFF; };
-                            break;
-                    }
-                    return new Tuple<GetMapperBankDelegate?, string>(bankDelegate, "SGB System Bus");
-                }
-                //public delegate int GetMapperBankDelegate();
-                //public delegate Tuple<GetMapperBankDelegate?, string> GetMapperAddressGetBankFunctionAndCallbackDomain(uint address);
-                //public GetMapperAddressGetBankFunctionAndCallbackDomain? GetBankFunctionAndCallbackDomain = null;
-            };
         }
         else
         {
