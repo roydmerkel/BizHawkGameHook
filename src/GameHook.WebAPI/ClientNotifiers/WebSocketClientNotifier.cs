@@ -39,5 +39,16 @@ namespace GameHook.WebAPI.ClientNotifiers
                 fieldsChanged = x.FieldsChanged
             }).ToArray());
         }
+
+        public async Task SendImmediateReadValues(IEnumerable<IGameHookProperty> properties)
+        {
+            await _hubContext.Clients.All.SendAsync("ImmediateReadValues", properties.Select(x => new
+            {
+                path = x.Path,
+                memoryContainer = x.MemoryContainer,
+                address = x.Address,
+                immediateWriteValues = x.ImmediateWriteValues
+            }).ToArray());
+        }
     }
 }

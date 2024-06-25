@@ -437,10 +437,10 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                     byte newByte = Convert.ToByte(newValue);
 
                                                                                     MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
+                                                                                    byte oldByte = domain!.PeekByte(domainAddress);
                                                                                     if (eventBits != null && eventBits.Length > 0)
                                                                                     {
-                                                                                        byte oldByte = domain!.PeekByte(domainAddress);
-                                                                                        Log.Note("Debug", $"oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
+                                                                                        Log.Note("Debug", $"INSTANTANEOUS READ: on bit field: oldByte: {oldByte:X}, domainAddress: {domainAddress:X}");
 
                                                                                         var inputBits = new BitArray(new byte[] { newByte });
                                                                                         var outputBits = new BitArray(new byte[] { oldByte });
@@ -453,12 +453,12 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                         outputBits.CopyTo(newByteContainer, 0);
                                                                                         newByte = newByteContainer[0];
                                                                                     }
-                                                                                    Log.Note("Debug", $"INSTANTANEOUS READ: newByte: {newByte:X}, domainAddress: {domainAddress:X}");
                                                                                     byte curState = InstantReadCurStateMap[ev][address][identifierMemoryDomain][domainAddress];
                                                                                     byte newState = InstantReadNewStateMap[ev][address][identifierMemoryDomain][domainAddress];
 
-                                                                                    if(curState != newState)
+                                                                                    if (curState != newState)
                                                                                     {
+                                                                                        Log.Note("Debug", $"INSTANTANEOUS READ: newByte: {newByte:X}, domainAddress: {domainAddress:X}");
                                                                                         var addressess = InstantReadNewStateMap[ev].Keys.OrderBy(x => x).ToArray();
                                                                                         // if we are trying to rewrite the same byte twice, then these are new values.
                                                                                         if (newState != newByte)
@@ -466,7 +466,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                             // rewriting the same byte more then once, the value structure has changed record it to the
                                                                                             // list of changes this frame.
                                                                                             List<byte> curValue = new();
-                                                                                            
+
                                                                                             foreach (var curAddress in addressess)
                                                                                             {
                                                                                                 foreach (var domainAddressValue in InstantReadNewStateMap[ev][curAddress][identifierMemoryDomain])
@@ -500,7 +500,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                                                 }
                                                                                             }
                                                                                         }
-                                                                                        if(allChanged)
+                                                                                        if (allChanged)
                                                                                         {
                                                                                             List<byte> curValue = new();
                                                                                             foreach (var curAddress in addressess)

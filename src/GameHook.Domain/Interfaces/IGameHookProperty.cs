@@ -39,6 +39,9 @@
         string? Bits { get; }
         string? Description { get; }
         bool? Instantaneous { get;  }
+        IList<byte[]>? ImmediateWriteBytes { get; }
+        IList<object?>? ImmediateWriteValues { get; }
+
         IGameHookEvent? GameHookEvent { get; }
 
         object? Value { get; set; }

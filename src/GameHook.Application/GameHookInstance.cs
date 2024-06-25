@@ -338,6 +338,23 @@ namespace GameHook.Application
                 }
             }
 
+            var immediateWriteValuesChanged = Mapper.Properties.Values.Where(x => x.ImmediateWriteValues != null && x.ImmediateWriteValues.Count > 1).ToArray();
+            if(immediateWriteValuesChanged.Length > 0)
+            {
+                try
+                {
+                    foreach (var notifier in ClientNotifiers)
+                    {
+                        await notifier.SendImmediateReadValues(immediateWriteValuesChanged);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Could not send {immediateWriteValuesChanged.Length} property immediate write events.");
+                    throw new PropertyProcessException($"Could not send {immediateWriteValuesChanged.Length} property immediate write events.", ex);
+                }
+            }
+
             FieldsChangedStopwatch.Stop();
 
             ReadLoopStopwatch.Stop();

@@ -1,9 +1,206 @@
 ﻿using GameHook.Domain.Interfaces;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace GameHook.Domain.GameHookProperties
 {
     public abstract partial class GameHookProperty : IGameHookProperty
     {
+        private class InstantWriteBytes<T> : IList<T>
+        {
+            private class InstantWriteBytesEnumerator : IEnumerator<T>
+            {
+                private GameHookProperty property;
+                private object lockObject;
+                private IEnumerator<T> enumerator;
+                private string fieldName;
+
+                public InstantWriteBytesEnumerator(GameHookProperty _property, IEnumerator<T> _enumerator, object _lockObj, string _fieldName)
+                {
+                    property = _property;
+                    lockObject = _lockObj;
+                    enumerator = _enumerator;
+                    fieldName = _fieldName;
+                }
+
+                public T Current
+                {
+                    get
+                    {
+                        lock (lockObject)
+                            return enumerator.Current;
+                    }
+                }
+
+                object IEnumerator.Current
+                {
+                    get
+                    {
+                        lock (lockObject)
+                            return enumerator.Current;
+                    }
+                }
+
+                public void Dispose()
+                {
+                    lock (lockObject)
+                    {
+                        property.FieldsChanged.Add(fieldName);
+                        enumerator.Dispose();
+                    }
+                }
+
+                public bool MoveNext()
+                {
+                    lock (lockObject)
+                    {
+                        return enumerator.MoveNext();
+                    }
+                }
+
+                public void Reset()
+                {
+                    lock (lockObject)
+                    {
+                        property.FieldsChanged.Add(fieldName);
+                        enumerator.Reset();
+                    }
+                }
+            }
+
+            private GameHookProperty property;
+            private object lockObject;
+            private List<T> list;
+            private string fieldName;
+
+            public InstantWriteBytes(GameHookProperty _property, object _lockObj, string _fieldName)
+            {
+                property = _property;
+                lockObject = _lockObj;
+                list = new List<T>();
+                fieldName = _fieldName;
+            }
+
+            public T this[int index] {
+                get
+                {
+                    lock(lockObject)
+                        return list[index];
+                }
+
+                set
+                {
+                    lock(lockObject)
+                        list[index] = value;
+                }
+            }
+
+            public int Count
+            {
+                get
+                {
+                    lock (lockObject)
+                        return list.Count;
+                }
+            }
+
+            public bool IsReadOnly
+            {
+                get
+                {
+                    return false;
+                }
+            }
+
+            public void Add(T item)
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    list.Add(item);
+                }
+            }
+
+            public void Clear()
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    list.Clear();
+                }
+            }
+
+            public bool Contains(T item)
+            {
+                lock (lockObject)
+                {
+                    return list.Contains(item);
+                }
+            }
+
+            public void CopyTo(T[] array, int arrayIndex)
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    list.CopyTo(array, arrayIndex);
+                }
+            }
+
+            public IEnumerator<T> GetEnumerator()
+            {
+                lock (lockObject)
+                {
+                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockObject, fieldName);
+                }
+            }
+
+            public int IndexOf(T item)
+            {
+                lock (lockObject)
+                {
+                    return list.IndexOf(item);
+                }
+            }
+
+            public void Insert(int index, T item)
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    list.Insert(index, item);
+                }
+            }
+
+            public bool Remove(T item)
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    return list.Remove(item);
+                }
+            }
+
+            public void RemoveAt(int index)
+            {
+                lock (lockObject)
+                {
+                    property.FieldsChanged.Add(fieldName);
+                    list.RemoveAt(index);
+                }
+            }
+
+            IEnumerator IEnumerable.GetEnumerator()
+            {
+                lock (lockObject)
+                {
+                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockObject, fieldName);
+                }
+            }
+        }
+
         private string? _memoryContainer { get; set; }
         private uint? _address { get; set; }
         private string? _addressString { get; set; }
@@ -20,6 +217,9 @@ namespace GameHook.Domain.GameHookProperties
         private string? _afterReadValueExpression { get; set; }
         private string? _afterReadValueFunction { get; set; }
         private string? _beforeWriteValueFunction { get; set; }
+        private IList<byte[]>? _immediateWriteBytes { get; set; }
+        private object _immediateWriteBytesLock { get; set; }
+        private IList<object?>? _immediateWriteValues { get; set;  }
 
         public string? MemoryContainer
         {
@@ -228,6 +428,44 @@ namespace GameHook.Domain.GameHookProperties
 
                 FieldsChanged.Add("beforeWriteValueFunction");
                 _beforeWriteValueFunction = value;
+            }
+        }
+
+        public IList<byte[]>? ImmediateWriteBytes
+        {
+            get 
+            { 
+                lock(_immediateWriteBytesLock) 
+                    return _immediateWriteBytes; 
+            }
+            set
+            {
+                lock (_immediateWriteBytesLock)
+                {
+                    if (_immediateWriteBytes != null && _immediateWriteBytes.Equals(value)) return;
+
+                    FieldsChanged.Add("immediateWriteBytes");
+                    _immediateWriteBytes = value;
+                }
+            }
+        }
+
+        public IList<object?>? ImmediateWriteValues { 
+            get
+            {
+                lock (_immediateWriteBytesLock)
+                    return _immediateWriteValues;
+            }
+
+            set
+            {
+                lock (_immediateWriteBytesLock)
+                {
+                    if (_immediateWriteValues != null && _immediateWriteValues.Equals(value)) return;
+
+                    FieldsChanged.Add("immediateWriteValues");
+                    _immediateWriteValues = value;
+                }
             }
         }
     }

@@ -174,8 +174,12 @@ namespace GameHook.Infrastructure.Drivers
                 IList<byte[]> values = instantReadEvent.Value;
 
                 IGameHookEvent? ev = eventsLookup.Where(x => x.SerialNumber == eventAddress.SerialNumber).DefaultIfEmpty(null).FirstOrDefault();
-                if(ev != null)
+                if(ev != null && ev.Property != null && ev.Property.Instantaneous != null && ev.Property.Instantaneous.Value && ev.Property.ImmediateWriteBytes != null)
                 {
+                    foreach (byte[] value in values)
+                    {
+                        ev.Property.ImmediateWriteBytes.Add(value);
+                    }
                 }
             }
         }

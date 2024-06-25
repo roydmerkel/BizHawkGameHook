@@ -24,6 +24,9 @@ namespace GameHook.Domain.GameHookProperties
             Bytes = null;
             BytesFrozen = null;
             Instantaneous = attributes.Instantaneous;
+            _immediateWriteBytesLock = new object();
+            ImmediateWriteBytes = new InstantWriteBytes<byte[]>(this, _immediateWriteBytesLock, "immediateWriteBytes");
+            ImmediateWriteValues = new InstantWriteBytes<object?>(this, _immediateWriteBytesLock, "immediateWriteValues");
 
             ReadFunction = attributes.ReadFunction;
             WriteFunction = attributes.WriteFunction;
@@ -219,31 +222,124 @@ namespace GameHook.Domain.GameHookProperties
                 // Pretend nothing has changed. :)
 
                 _ = Instance.Driver.WriteBytes((MemoryAddress)address, BytesFrozen);
-
-                return;
             }
-
-            value = ToValue(bytes);
-
-            if (value != null && AfterReadValueExpression != null)
+            else
             {
-                value = Instance.ExecuteExpression(AfterReadValueExpression, value);
+
+                value = ToValue(bytes);
+
+                if (value != null && AfterReadValueExpression != null)
+                {
+                    value = Instance.ExecuteExpression(AfterReadValueExpression, value);
+                }
+
+                if (value != null && AfterReadValueFunction != null)
+                {
+                    value = Instance.ExecuteModuleFunction(AfterReadValueFunction, this);
+                }
+
+                // Reference lookup
+                if (ShouldRunReferenceTransformer)
+                {
+                    if (ComputedReference == null) throw new Exception("ReferenceObject is NULL.");
+
+                    value = ComputedReference.GetSingleOrDefaultByKey(Convert.ToUInt64(value))?.Value;
+                }
+
+                Value = value;
             }
 
-            if (value != null && AfterReadValueFunction != null)
+            IList<byte[]> bytesArray = new List<byte[]>();
+            lock (_immediateWriteBytesLock)
             {
-                value = Instance.ExecuteModuleFunction(AfterReadValueFunction, this);
+                foreach (byte[]? instantWriteBytes in ImmediateWriteBytes)
+                {
+                    if (instantWriteBytes != null && address == null || BytesFrozen == null || bytes.SequenceEqual(BytesFrozen) != false)
+                        bytesArray.Add(instantWriteBytes);
+                }
+                ImmediateWriteBytes.Clear();
             }
 
-            // Reference lookup
-            if (ShouldRunReferenceTransformer)
+            lock (_immediateWriteBytesLock)
             {
-                if (ComputedReference == null) throw new Exception("ReferenceObject is NULL.");
+                // emulate normal value behavior which resets the value every frame, so reset the intermediate/intermediate values every frame.
+                ImmediateWriteBytes.Clear();
+                ImmediateWriteValues.Clear();
 
-                value = ComputedReference.GetSingleOrDefaultByKey(Convert.ToUInt64(value))?.Value;
+                // process the bytes array into values.
+                foreach (byte[] curBytes in bytesArray)
+                {
+                    if (string.IsNullOrEmpty(Bits) == false)
+                    {
+                        int[] indexes;
+
+                        if (Bits.Contains('-'))
+                        {
+                            var parts = Bits.Split('-');
+
+                            if (int.TryParse(parts[0], out int start) && int.TryParse(parts[1], out int end))
+                            {
+                                indexes = Enumerable.Range(start, end - start + 1).ToArray();
+                            }
+                            else
+                            {
+                                throw new ArgumentException($"Invalid format for attribute Bits ({Bits}) for path {Path}.");
+                            }
+                        }
+                        else if (Bits.Contains(','))
+                        {
+                            indexes = Bits.Split(',')
+                                           .Select(x => int.TryParse(x, out int num) ? num : throw new ArgumentException($"Invalid format for attribute Bits ({Bits}) for path {Path}."))
+                                           .ToArray();
+                        }
+                        else
+                        {
+                            if (int.TryParse(Bits, out int index))
+                            {
+                                indexes = [index];
+                            }
+                            else
+                            {
+                                throw new ArgumentException($"Invalid format for attribute Bits ({Bits}) for path {Path}.");
+                            }
+                        }
+
+                        var i = 0;
+                        var inputBits = new BitArray(curBytes);
+                        var outputBits = new BitArray(curBytes.Length * 8);
+
+                        foreach (var x in indexes)
+                        {
+                            outputBits[i] = inputBits[x];
+                            i += 1;
+                        }
+
+                        outputBits.CopyTo(curBytes, 0);
+                    }
+
+                    object? curValue = ToValue(curBytes);
+
+                    if (curValue != null && AfterReadValueExpression != null)
+                    {
+                        curValue = Instance.ExecuteExpression(AfterReadValueExpression, curValue);
+                    }
+
+                    if (curValue != null && AfterReadValueFunction != null)
+                    {
+                        curValue = Instance.ExecuteModuleFunction(AfterReadValueFunction, this);
+                    }
+
+                    // Reference lookup
+                    if (ShouldRunReferenceTransformer)
+                    {
+                        if (ComputedReference == null) throw new Exception("ReferenceObject is NULL.");
+
+                        curValue = ComputedReference.GetSingleOrDefaultByKey(Convert.ToUInt64(curValue))?.Value;
+                    }
+
+                    ImmediateWriteValues.Add(curValue);
+                }
             }
-
-            Value = value;
         }
 
         public async Task WriteValue(string value, bool? freeze)
