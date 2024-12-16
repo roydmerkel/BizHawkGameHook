@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<LangVersion>10.0</LangVersion>
 		<Nullable>enable</Nullable>
@@ -18,19 +18,19 @@
       <HintPath>third-party\EmuHawk.exe</HintPath>
     </Reference>
 		<Reference Include="BizHawk.Client.Common">
-		  <HintPath>$(BIZHAWK_HOME)dll\BizHawk.Client.Common.dll</HintPath>
+		  <HintPath>$(BIZHAWK_HOME)BizHawk.Client.Common.dll</HintPath>
 		</Reference>
 		<Reference Include="BizHawk.Common">
-		  <HintPath>$(BIZHAWK_HOME)dll\BizHawk.Common.dll</HintPath>
+		  <HintPath>$(BIZHAWK_HOME)BizHawk.Common.dll</HintPath>
 		</Reference>
 		<Reference Include="BizHawk.Emulation.Common">
-		  <HintPath>$(BIZHAWK_HOME)dll\BizHawk.Emulation.Common.dll</HintPath>
+		  <HintPath>$(BIZHAWK_HOME)BizHawk.Emulation.Common.dll</HintPath>
 		</Reference>
 		<Reference Include="BizHawk.Emulation.Cores">
-		  <HintPath>$(BIZHAWK_HOME)dll\BizHawk.Emulation.Cores.dll</HintPath>
+		  <HintPath>$(BIZHAWK_HOME)BizHawk.Emulation.Cores.dll</HintPath>
 		</Reference>
 		<Reference Include="BizHawk.WinForms.Controls">
-		  <HintPath>$(BIZHAWK_HOME)dll\BizHawk.WinForms.Controls.dll</HintPath>
+		  <HintPath>$(BIZHAWK_HOME)BizHawk.WinForms.Controls.dll</HintPath>
 		</Reference>
 		<Reference Include="System.Windows.Forms" />
 	</ItemGroup>
