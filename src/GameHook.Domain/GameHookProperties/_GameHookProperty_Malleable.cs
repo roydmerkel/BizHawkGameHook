@@ -8,19 +8,30 @@ namespace GameHook.Domain.GameHookProperties
 {
     public abstract partial class GameHookProperty : IGameHookProperty
     {
+        public delegate void LockDelegate();
+        public delegate void UnlockDelegate();
+
         private class InstantWriteBytes<T> : IList<T>
         {
             private class InstantWriteBytesEnumerator : IEnumerator<T>
             {
+                private LockDelegate lockFunction;
+                private UnlockDelegate unlockFunction;
+
+                private LockDelegate lockFieldsFunction;
+                private UnlockDelegate unlockFieldsFunction;
+
                 private GameHookProperty property;
-                private object lockObject;
                 private IEnumerator<T> enumerator;
                 private string fieldName;
 
-                public InstantWriteBytesEnumerator(GameHookProperty _property, IEnumerator<T> _enumerator, object _lockObj, string _fieldName)
+                public InstantWriteBytesEnumerator(GameHookProperty _property, IEnumerator<T> _enumerator, LockDelegate _lockFunction, UnlockDelegate _unlockFunction, LockDelegate _lockFieldsFunction, UnlockDelegate _unlockFieldsFunction, string _fieldName)
                 {
                     property = _property;
-                    lockObject = _lockObj;
+                    lockFunction = _lockFunction;
+                    unlockFunction = _unlockFunction;
+                    lockFieldsFunction = _lockFieldsFunction;
+                    unlockFieldsFunction = _unlockFieldsFunction;
                     enumerator = _enumerator;
                     fieldName = _fieldName;
                 }
@@ -29,8 +40,15 @@ namespace GameHook.Domain.GameHookProperties
                 {
                     get
                     {
-                        lock (lockObject)
+                        try
+                        {
+                            lockFunction.Invoke();
                             return enumerator.Current;
+                        }
+                        finally
+                        {
+                            unlockFunction.Invoke();
+                        }
                     }
                 }
 
@@ -38,34 +56,60 @@ namespace GameHook.Domain.GameHookProperties
                 {
                     get
                     {
-                        lock (lockObject)
-                            return enumerator.Current;
+                        try
+                        {
+                            lockFunction.Invoke();
+                            return ((IEnumerator)enumerator).Current;
+                        }
+                        finally
+                        {
+                            unlockFunction.Invoke();
+                        }
                     }
                 }
 
                 public void Dispose()
                 {
-                    lock (lockObject)
+                    try
                     {
+                        lockFunction.Invoke();
+                        lockFieldsFunction.Invoke();
                         property.FieldsChanged.Add(fieldName);
                         enumerator.Dispose();
+                    }
+                    finally
+                    {
+                        unlockFieldsFunction.Invoke();
+                        unlockFunction.Invoke();
                     }
                 }
 
                 public bool MoveNext()
                 {
-                    lock (lockObject)
+                    try
                     {
+                        lockFunction.Invoke();
                         return enumerator.MoveNext();
+                    }
+                    finally
+                    {
+                        unlockFunction.Invoke();
                     }
                 }
 
                 public void Reset()
                 {
-                    lock (lockObject)
+                    try
                     {
+                        lockFunction.Invoke();
+                        lockFieldsFunction.Invoke();
                         property.FieldsChanged.Add(fieldName);
                         enumerator.Reset();
+                    }
+                    finally
+                    {
+                        unlockFieldsFunction.Invoke();
+                        unlockFunction.Invoke();
                     }
                 }
             }
@@ -75,10 +119,19 @@ namespace GameHook.Domain.GameHookProperties
             private List<T> list;
             private string fieldName;
 
-            public InstantWriteBytes(GameHookProperty _property, object _lockObj, string _fieldName)
+            private LockDelegate lockFunction;
+            private UnlockDelegate unlockFunction;
+
+            private LockDelegate lockFieldsFunction;
+            private UnlockDelegate unlockFieldsFunction;
+
+            public InstantWriteBytes(GameHookProperty _property, LockDelegate _lockFunction, UnlockDelegate _unlockFunction, LockDelegate _lockFieldsFunction, UnlockDelegate _unlockFieldsFunction, string _fieldName)
             {
                 property = _property;
-                lockObject = _lockObj;
+                lockFunction = _lockFunction;
+                unlockFunction = _unlockFunction;
+                lockFieldsFunction = _lockFieldsFunction;
+                unlockFieldsFunction = _unlockFieldsFunction;
                 list = new List<T>();
                 fieldName = _fieldName;
             }
@@ -86,14 +139,28 @@ namespace GameHook.Domain.GameHookProperties
             public T this[int index] {
                 get
                 {
-                    lock(lockObject)
+                    try
+                    {
+                        lockFunction.Invoke();
                         return list[index];
+                    }
+                    finally
+                    {
+                        unlockFunction.Invoke();
+                    }
                 }
 
                 set
                 {
-                    lock(lockObject)
+                    try
+                    {
+                        lockFunction.Invoke();
                         list[index] = value;
+                    }
+                    finally
+                    {
+                        unlockFunction.Invoke();
+                    }
                 }
             }
 
@@ -101,8 +168,15 @@ namespace GameHook.Domain.GameHookProperties
             {
                 get
                 {
-                    lock (lockObject)
+                    try
+                    {
+                        lockFunction.Invoke();
                         return list.Count;
+                    }
+                    finally
+                    {
+                        unlockFunction.Invoke();
+                    }
                 }
             }
 
@@ -116,87 +190,149 @@ namespace GameHook.Domain.GameHookProperties
 
             public void Add(T item)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     list.Add(item);
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             public void Clear()
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     list.Clear();
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             public bool Contains(T item)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
                     return list.Contains(item);
+                }
+                finally
+                {
+                    unlockFunction.Invoke();
                 }
             }
 
             public void CopyTo(T[] array, int arrayIndex)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     list.CopyTo(array, arrayIndex);
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             public IEnumerator<T> GetEnumerator()
             {
-                lock (lockObject)
+                try
                 {
-                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockObject, fieldName);
+                    lockFunction.Invoke();
+                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockFunction, unlockFunction, lockFieldsFunction, unlockFieldsFunction, fieldName);
+                }
+                finally
+                {
+                    unlockFunction.Invoke();
                 }
             }
 
             public int IndexOf(T item)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
                     return list.IndexOf(item);
+                }
+                finally
+                {
+                    unlockFunction.Invoke();
                 }
             }
 
             public void Insert(int index, T item)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     list.Insert(index, item);
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             public bool Remove(T item)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     return list.Remove(item);
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             public void RemoveAt(int index)
             {
-                lock (lockObject)
+                try
                 {
+                    lockFunction.Invoke();
+                    lockFieldsFunction.Invoke();
                     property.FieldsChanged.Add(fieldName);
                     list.RemoveAt(index);
+                }
+                finally
+                {
+                    unlockFieldsFunction.Invoke();
+                    unlockFunction.Invoke();
                 }
             }
 
             IEnumerator IEnumerable.GetEnumerator()
             {
-                lock (lockObject)
+                try
                 {
-                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockObject, fieldName);
+                    lockFunction.Invoke();
+                    return new InstantWriteBytesEnumerator(property, list.GetEnumerator(), lockFunction, unlockFunction, lockFieldsFunction, unlockFieldsFunction, fieldName);
+                }
+                finally
+                {
+                    unlockFunction.Invoke();
                 }
             }
         }
@@ -220,6 +356,7 @@ namespace GameHook.Domain.GameHookProperties
         private IList<byte[]>? _immediateWriteBytes { get; set; }
         private object _immediateWriteBytesLock { get; set; }
         private IList<object?>? _immediateWriteValues { get; set;  }
+        private object _fieldsChangedLock { get; set; }
 
         public string? MemoryContainer
         {
@@ -228,7 +365,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (value == _memoryContainer) { return; }
 
+                FieldsChangedLock();
                 FieldsChanged.Add("memoryContainer");
+                FieldsChangedUnlock();
                 _memoryContainer = value;
             }
         }
@@ -246,7 +385,9 @@ namespace GameHook.Domain.GameHookProperties
                 IsMemoryAddressSolved = true;
                 GameHookEvent?.UpdateAddressFromProperty();
 
+                FieldsChangedLock();
                 FieldsChanged.Add("address");
+                FieldsChangedUnlock();
             }
         }
 
@@ -271,7 +412,9 @@ namespace GameHook.Domain.GameHookProperties
                 }
                 GameHookEvent?.UpdateAddressFromProperty();
 
+                FieldsChangedLock();
                 FieldsChanged.Add("address");
+                FieldsChangedUnlock();
             }
         }
 
@@ -282,7 +425,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_length == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("length");
+                FieldsChangedUnlock();
                 _length = value;
             }
         }
@@ -294,7 +439,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_size == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("size");
+                FieldsChangedUnlock();
                 _size = value;
             }
         }
@@ -306,7 +453,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_bits == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("bits");
+                FieldsChangedUnlock();
                 _bits = value;
             }
         }
@@ -318,7 +467,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_reference == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("reference");
+                FieldsChangedUnlock();
                 _reference = value;
             }
         }
@@ -330,7 +481,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_description == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("description");
+                FieldsChangedUnlock();
                 _description = value;
             }
         }
@@ -342,7 +495,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_value != null && _value.Equals(value)) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("value");
+                FieldsChangedUnlock();
                 _value = value;
             }
         }
@@ -354,7 +509,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_bytes != null && value != null && _bytes.SequenceEqual(value)) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("bytes");
+                FieldsChangedUnlock();
                 _bytes = value;
             }
         }
@@ -366,7 +523,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_bytesFrozen != null && value != null && _bytesFrozen.SequenceEqual(value)) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("frozen");
+                FieldsChangedUnlock();
                 _bytesFrozen = value;
             }
         }
@@ -378,7 +537,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_readFunction == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("readFunction");
+                FieldsChangedUnlock();
                 _readFunction = value;
             }
         }
@@ -390,7 +551,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_writeFunction == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("writeFunction");
+                FieldsChangedUnlock();
                 _writeFunction = value;
             }
         }
@@ -402,7 +565,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_afterReadValueExpression == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("afterReadValueExpression");
+                FieldsChangedUnlock();
                 _afterReadValueExpression = value;
             }
         }
@@ -414,7 +579,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_afterReadValueFunction == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("afterReadValueFunction");
+                FieldsChangedUnlock();
                 _afterReadValueFunction = value;
             }
         }
@@ -426,7 +593,9 @@ namespace GameHook.Domain.GameHookProperties
             {
                 if (_beforeWriteValueFunction == value) return;
 
+                FieldsChangedLock();
                 FieldsChanged.Add("beforeWriteValueFunction");
+                FieldsChangedUnlock();
                 _beforeWriteValueFunction = value;
             }
         }
@@ -444,7 +613,9 @@ namespace GameHook.Domain.GameHookProperties
                 {
                     if (_immediateWriteBytes != null && _immediateWriteBytes.Equals(value)) return;
 
+                    FieldsChangedLock();
                     FieldsChanged.Add("immediateWriteBytes");
+                    FieldsChangedUnlock();
                     _immediateWriteBytes = value;
                 }
             }
@@ -463,10 +634,30 @@ namespace GameHook.Domain.GameHookProperties
                 {
                     if (_immediateWriteValues != null && _immediateWriteValues.Equals(value)) return;
 
+                    FieldsChangedLock();
                     FieldsChanged.Add("immediateWriteValues");
+                    FieldsChangedUnlock();
                     _immediateWriteValues = value;
                 }
             }
+        }
+
+        public void ImediateWriteBytesLock()
+        {
+            Monitor.Enter(_immediateWriteBytesLock);
+        }
+        public void ImediateWriteBytesUnlock()
+        {
+            Monitor.Exit(_immediateWriteBytesLock);
+        }
+
+        public void FieldsChangedLock()
+        {
+            Monitor.Enter(_fieldsChangedLock);
+        }
+        public void FieldsChangedUnlock()
+        {
+            Monitor.Exit(_fieldsChangedLock);
         }
     }
 }

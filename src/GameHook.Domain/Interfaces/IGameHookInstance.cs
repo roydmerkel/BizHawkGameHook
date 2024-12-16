@@ -1,7 +1,10 @@
-﻿namespace GameHook.Domain.Interfaces
+﻿using Microsoft.Extensions.Logging;
+
+namespace GameHook.Domain.Interfaces
 {
     public interface IGameHookInstance
     {
+        public ILogger<IGameHookInstance> Logger { get; }
         bool Initalized { get; }
         Dictionary<string, object?> State { get; }
         Dictionary<string, object?> Variables { get; }

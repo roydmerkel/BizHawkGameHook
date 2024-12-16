@@ -54,14 +54,48 @@ class GameHookProperty {
     }
 }
 
+class GameHookEvent {
+    _client = null
+
+    name = null
+    memoryContainer = null
+    address = null
+    bank = null
+    eventType = null
+    description = null
+    length = null
+    size = null
+    bits = null
+    enabled = null
+    constructor(client, obj) {
+        this._client = client
+
+        for (const item of Object.entries(obj)) {
+            this[item[0]] = item[1]
+        }
+    }
+
+    async enable() { this._client._enableEvent(this.name) }
+    async disable() { this._client._disableEvent(this.name) }
+
+    toString() {
+        if (this.value === undefined || this.value === null) { return null }
+
+        return this.value.toString()
+    }
+}
+
 class GameHookMapperClient {
     _connectionString
     _signalrClient
     _properties
     _propertiesMap
+    _events
+    _eventsMap
 
     meta
     properties
+    events
     glossary
 
     connected = false
@@ -109,7 +143,10 @@ class GameHookMapperClient {
         this.meta = null
         this._properties = null
         this._propertiesMap = null
+        this._events = null;
+        this._eventsMap = null
         this.properties = null
+        this.events = null
         this.glossary = null
     }
 
@@ -133,6 +170,10 @@ class GameHookMapperClient {
             }
 
             final[path[lastKeyIndex]] = value
+        }
+
+        function assignEvent(final, name, value) {
+            final[name] = value
         }
 
         let mapper = await fetch(`${this._connectionString}/mapper`)
@@ -161,8 +202,14 @@ class GameHookMapperClient {
         this._properties = mapper.properties.map(x => new GameHookProperty(this, x))
         this._properties.forEach(x => assign(this.properties, x.path.split('.'), x))
 
+        this.events = {}
+        this._events = mapper.events.map(x => new GameHookEvent(this, x))
+        this._events.forEach(x => assignEvent(this.events, x.name, x))
+
         this._propertiesMap = new Map()
+        this._eventsMap = new Map()
         this._properties.forEach(x => this._propertiesMap.set(x.path, x))
+        this._events.forEach(x => this._eventsMap.set(x.name, x))
 
         setTimeout(() => this.loadMapper(), this._options.automaticRefreshMapperTimeMinutes * 60000)
 
@@ -290,6 +337,122 @@ class GameHookMapperClient {
             }
         })
 
+
+        this._signalrClient.on('ImmediateReadValues', (immediateReadValues) => {
+            if (that._properties && that._properties.length > 0) {
+                for (const immediateReadValue of immediateReadValues) {
+
+                    let property = that._propertiesMap.get(immediateReadValue.path)
+                    if (!property) {
+                        console.warn(`[GameHook Client] Could not find a related property in PropertyUpdated event for: ${immediateReadValue.path}`)
+                        return
+                    }
+
+                    property.memoryContainer = immediateReadValue.memoryContainer
+                    property.address = immediateReadValue.address
+                    property.immediateReadValue = immediateReadValue.immediateReadValue
+
+                    // Trigger the global property changed event.
+                    if (that.onImmediateReadValues) {
+                        that.onImmediateReadValues(property, immediateReadValue.immediateReadValue)
+                    }
+                }
+            } else {
+                console.debug('[GameHook Client] Mapper is not loaded, throwing away ImmediateReadValues event.')
+            }
+        })
+
+        this._signalrClient.on('TriggeredEvents', (events) => {
+            console.log("events:", events)
+            if (that._events && that._events.length > 0) {
+                for (const ev of events) {
+
+                    let event = that._eventsMap.get(ev.name)
+                    if (!event) {
+                        console.warn(`[GameHook Client] Could not find a related property in PropertyUpdated event for: ${event.name}`)
+                        return
+                    }
+
+                    event.memoryContainer = ev.memoryContainer;
+                    event.address = ev.address
+                    event.bank = ev.bank
+                    event.eventType = ev.eventType
+                    event.description = ev.description
+                    event.length = ev.length
+                    event.size = ev.size
+                    event.bits = ev.bits
+                    event.enabled = ev.enabled
+
+                    // Trigger the global property changed event.
+                    if (that.onTriggeredEvents) {
+                        that.onTriggeredEvents(event)
+                    }
+                }
+            } else {
+                console.debug('[GameHook Client] Mapper is not loaded, throwing away ImmediateReadValues event.')
+            }
+        })
+
+        this._signalrClient.on('EnabledEvents', (events) => {
+            if (that._events && that._events.length > 0) {
+                for (const ev of events) {
+
+                    let event = that._eventsMap.get(ev.name)
+                    if (!event) {
+                        console.warn(`[GameHook Client] Could not find a related property in PropertyUpdated event for: ${event.name}`)
+                        return
+                    }
+
+                    event.memoryContainer = ev.memoryContainer;
+                    event.address = ev.address
+                    event.bank = ev.bank
+                    event.eventType = ev.eventType
+                    event.description = ev.description
+                    event.length = ev.length
+                    event.size = ev.size
+                    event.bits = ev.bits
+                    event.enabled = ev.enabled
+
+                    // Trigger the global property changed event.
+                    if (that.onEnabledEvents) {
+                        that.onEnabledEvents(event)
+                    }
+                }
+            } else {
+                console.debug('[GameHook Client] Mapper is not loaded, throwing away ImmediateReadValues event.')
+            }
+        })
+
+        this._signalrClient.on('DisabledEvents', (events) => {
+            if (that._events && that._events.length > 0) {
+                for (const ev of events) {
+
+                    let event = that._eventsMap.get(ev.name)
+                    if (!event) {
+                        console.warn(`[GameHook Client] Could not find a related property in PropertyUpdated event for: ${event.name}`)
+                        return
+                    }
+
+                    event.memoryContainer = ev.memoryContainer;
+                    event.address = ev.address
+                    event.bank = ev.bank
+                    event.eventType = ev.eventType
+                    event.description = ev.description
+                    event.length = ev.length
+                    event.size = ev.size
+                    event.bits = ev.bits
+                    event.enabled = ev.enabled
+
+                    // Trigger the global property changed event.
+                    if (that.onDisabledEvents) {
+                        that.onDisabledEvents(event)
+                    }
+                }
+            } else {
+                console.debug('[GameHook Client] Mapper is not loaded, throwing away ImmediateReadValues event.')
+            }
+        })
+
         this._signalrClient.on('MapperLoaded', async () => { await this.loadMapper(); this.onMapperLoaded() })
         this._signalrClient.on('GameHookError', (err) => { this.onGameHookError(err) })
         this._signalrClient.on('DriverError', (err) => { this.onDriverError(err) })
@@ -343,6 +506,42 @@ class GameHookMapperClient {
             })
     }
 
+    async _enableEvent(name) {
+        await fetch(`${this._connectionString}/mapper/events/${name}/enable/`, {
+            method: 'GET',
+        })
+            .then(async (x) => { return { response: x } })
+            .then(x => {
+                if (x.response.status === 200) {
+                    return
+                } else {
+                    if (x.body) {
+                        throw new Error(x.body)
+                    } else {
+                        throw new Error('Unknown error')
+                    }
+                }
+            })
+    }
+
+    async _disableEvent(name) {
+        await fetch(`${this._connectionString}/mapper/events/${name}/disable/`, {
+            method: 'GET',
+        })
+            .then(async (x) => { return { response: x } })
+            .then(x => {
+                if (x.response.status === 200) {
+                    return
+                } else {
+                    if (x.body) {
+                        throw new Error(x.body)
+                    } else {
+                        throw new Error('Unknown error')
+                    }
+                }
+            })
+    }
+
     onConnected() { /* Override this with your own function. */ }
     onDisconnected() { /* Override this with your own function. */ }
 
@@ -351,6 +550,10 @@ class GameHookMapperClient {
     onMapperLoadError(err) { /* Override this with your own function. */ }
     onDriverError(err) { /* Override this with your own function. */ }
     onPropertyChanged(property, oldProperty, fieldsChanged) { /* Override this with your own function. */ }
+    onImmediateReadValues(property, immediateReadValues) { /* Override this with your own function. */ }
+    onTriggeredEvents(event) { /* Override this with your own function. */ }
+    onEnabledEvents(event) { /* Override this with your own function. */ }
+    onDisabledEvents(event) { /* Override this with your own function. */ }
 
     onUiBuilderScreenSaved(id) { /* Override this with your own function. */ }
 }

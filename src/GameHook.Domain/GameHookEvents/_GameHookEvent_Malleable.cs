@@ -14,6 +14,8 @@ namespace GameHook.Domain.GameHookEvents
         private int? _length { get; set; }
         private int? _size { get; set; }
         private string? _bits { get; set; }
+        private bool? _triggered { get; set;  }
+        private bool? _enabled { get; set; }
 
         public string? MemoryContainer
         {
@@ -40,19 +42,19 @@ namespace GameHook.Domain.GameHookEvents
                 IsMemoryAddressSolved = true;
                 if (_address == null && _oldAddress != null)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = _address;
                 }
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(this);
+                    SetEvent();
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = _address;
-                    SetEvent(this);
+                    SetEvent();
                 }
 
                 FieldsChanged.Add("address");
@@ -81,19 +83,19 @@ namespace GameHook.Domain.GameHookEvents
 
                 if (_address == null && _oldAddress != null)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = _address;
                 }
                 else if (_address != null && _oldAddress == null)
                 {
                     _oldAddress = _address;
-                    SetEvent(this);
+                    SetEvent();
                 }
                 else if (_address != null && _oldAddress != null && _oldAddress != _address)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = _address;
-                    SetEvent(this);
+                    SetEvent();
                 }
 
                 FieldsChanged.Add("address");
@@ -125,7 +127,7 @@ namespace GameHook.Domain.GameHookEvents
                 {
                     if (_address != null)
                     {
-                        ClearEvent(this);
+                        ClearEvent();
                     }
                     _oldBank = _bank;
                 }
@@ -134,19 +136,19 @@ namespace GameHook.Domain.GameHookEvents
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(this);
+                        SetEvent();
                     }
                 }
                 else if (_bank != null && _oldBank != null && _oldBank != _bank)
                 {
                     if (_address != null)
                     {
-                        ClearEvent(this);
+                        ClearEvent();
                     }
                     _oldBank = _bank;
                     if (_address != null)
                     {
-                        SetEvent(this);
+                        SetEvent();
                     }
                 }
 
@@ -187,6 +189,30 @@ namespace GameHook.Domain.GameHookEvents
 
                 FieldsChanged.Add("bits");
                 _bits = value;
+            }
+        }
+
+        public bool? Triggered 
+        {
+            get => _triggered;
+            set
+            {
+                if (_triggered == value) return;
+
+                FieldsChanged.Add("triggered");
+                _triggered = value;
+            }
+        }
+
+        public bool? Enabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value) return;
+
+                FieldsChanged.Add("enabled");
+                _enabled = value;
             }
         }
     }

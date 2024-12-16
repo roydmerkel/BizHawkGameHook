@@ -455,6 +455,8 @@ namespace GameHook.Infrastructure
             EventOperationType_Clear = 1,
             EventOperationType_Add = 2,
             EventOperationType_Remove = 3,
+            EventOperationType_Disable = 4,
+            EventOperationType_Enable = 5,
         }
         public class EventOperation(EventOperationType opType, EventType eventType, ulong? eventSerial, EventAddress? eventAddress) : ISerializable
         {

@@ -1,10 +1,11 @@
 ﻿using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 
 namespace GameHook.Domain.GameHookProperties
 {
     public class StringProperty : GameHookProperty, IGameHookProperty
     {
-        public StringProperty(IGameHookInstance instance, PropertyAttributes variables) : base(instance, variables)
+        public StringProperty(ILogger logger, IGameHookInstance instance, PropertyAttributes variables) : base(logger, instance, variables)
         {
             Reference ??= "defaultCharacterMap";
         }

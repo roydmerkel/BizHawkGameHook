@@ -286,5 +286,40 @@ namespace GameHook.Infrastructure.Drivers
             Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
             return Task.CompletedTask;
         }
+
+        public Task EnableEvent(EventType eventType, IGameHookEvent eventObj)
+        {
+            Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+            return Task.CompletedTask;
+        }
+
+        public Task DisableEvent(EventType eventType, IGameHookEvent eventObj)
+        {
+            Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+            return Task.CompletedTask;
+        }
+
+        public List<IGameHookEvent> EnabledEvents
+        {
+            get
+            {
+                Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+                return new();
+            }
+        }
+        public List<IGameHookEvent> DisabledEvents
+        {
+            get
+            {
+                Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+                return new();
+            }
+        }
+
+        public Task ClearEnabledDisabledEvents()
+        {
+            Logger.LogError("Callback events are unsupported in RetroArch UDP api, at this time.");
+            return Task.CompletedTask;
+        }
     }
 }

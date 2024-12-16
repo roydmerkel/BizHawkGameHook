@@ -46,12 +46,16 @@
         int? Length { get; }
         int? Size { get; }
         string? Bits { get; }
+        bool? Triggered { get; set;  }
+        bool? Enabled { get; set; }
 
         EventRegisterOverride[] EventRegisterOverrides { get; }
 
         void ProcessLoop(IMemoryManager container);
-        void ClearEvent(IGameHookEvent ev);
-        void SetEvent(IGameHookEvent ev);
+        void ClearEvent();
+        void SetEvent();
+        void DisableEvent();
+        void EnableEvent();
         void UpdateAddressFromProperty();
     }
 }

@@ -15,6 +15,7 @@ using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using static BizHawk.Emulation.Cores.Computers.AmstradCPC.CRCT_6845;
 using static GameHook.Integrations.BizHawk.BizHawkInterface;
 using static GameHookIntegration.SharedPlatformConstants;
 using static GameHookIntegration.SharedPlatformConstants.PlatformMapper;
@@ -51,6 +52,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     private readonly object GameHook_EventLock = new();
     private IDictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>> GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
     private IDictionary<ulong, IDictionary<EventType, EventAddress>> GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+    private IDictionary<EventType, IDictionary<EventAddress, bool>> GameHook_EventEnabled = new Dictionary<EventType, IDictionary<EventAddress, bool>>();
     private IDictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry> scopeToEntry = new Dictionary<string, SharedPlatformConstants.PlatformMemoryLayoutEntry>();
     private SharedPlatformConstants.PlatformMapper? Mapper = null;
     private Queue<EventOperation> eventOperationsQueue = new();
@@ -65,6 +67,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     private readonly PipeServer<EventOperation>? eventsPipe;
     private readonly PipeServer<WriteCall>? writeCallsPipe = null;
     private readonly PipeServer<InstantReadEvents>? instantReadValuesPipe = null;
+    private readonly PipeServer<EventAddress>? triggeredEventsPipe = null;
 
     private byte[] DataBuffer { get; } = new byte[SharedPlatformConstants.BIZHAWK_DATA_PACKET_SIZE];
 
@@ -77,7 +80,9 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
     public delegate void SoftResetCallbackDelegate();
 
     public HardResetCallbackDelegate? HardReset { get; set; } = null;
+    public bool HardResetEnabled { get; set; } = false;
     public SoftResetCallbackDelegate? SoftReset { get; set; } = null;
+    public bool SoftResetEnabled { get; set; } = false;
 
     public GameHookIntegrationForm()
     {
@@ -107,6 +112,8 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
 
         instantReadValuesPipe = new("GAMEHOOK_BIZHAWK_INSTANT_READ.pipe", x => InstantReadEvents.Deserialize(x));
         InstantReadValuesSet = false;
+
+        triggeredEventsPipe = new("GAMEHOOK_BIZHAWK_TRIGGERED_EVENTS.pipe", x => EventAddress.Deserialize(x));
 
         Log.EnableDomain("Info");
         Log.EnableDomain("Debug");
@@ -142,6 +149,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     Debuggable?.MemoryCallbacks?.Clear();
                     GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
                     GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+                    GameHook_EventEnabled = new Dictionary<EventType, IDictionary<EventAddress, bool>>();
                     InstantReadCurStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
                     InstantReadNewStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
                     InstantReadValues = new();
@@ -169,17 +177,33 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                         {
                             HardReset = new HardResetCallbackDelegate(() =>
                             {
-                                Log.Note("Info", $"_hardreset");
+                                if (HardResetEnabled)
+                                {
+                                    Log.Note("Info", $"_hardreset");
+                                    lock (GameHook_EventLock)
+                                    {
+                                        triggeredEventsPipe.Write(ev);
+                                    }
+                                }
                                 return;
                             });
+                            HardResetEnabled = true;
                         }
                         if ((ev.EventType & EventType.EventType_SoftReset) != 0)
                         {
                             SoftReset = new SoftResetCallbackDelegate(() =>
                             {
-                                Log.Note("Info", $"_softreset");
+                                if (SoftResetEnabled)
+                                {
+                                    Log.Note("Info", $"_softreset");
+                                    lock (GameHook_EventLock)
+                                    {
+                                        triggeredEventsPipe.Write(ev);
+                                    }
+                                }
                                 return;
                             });
+                            SoftResetEnabled = true;
                         }
                     }
                     else
@@ -378,6 +402,17 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                             new MemoryCallbackDelegate(
                                                                 (address, value, flags) =>
                                                                 {
+                                                                    bool enabled = false;
+                                                                    if (GameHook_EventEnabled.ContainsKey(evEventType) && GameHook_EventEnabled[evEventType].ContainsKey(ev))
+                                                                    {
+                                                                        enabled = GameHook_EventEnabled[evEventType][ev];
+                                                                    }
+
+                                                                    if(!enabled)
+                                                                    {
+                                                                        return;
+                                                                    }
+
                                                                     ushort[] banks = new ushort[] { ushort.MaxValue, Convert.ToUInt16(GetBank()) };
                                                                     foreach (var bank in banks)
                                                                     {
@@ -396,10 +431,14 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                             if (eventType == MemoryCallbackType.Execute)
                                                                             {
                                                                                 Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                lock (GameHook_EventLock)
+                                                                                {
+                                                                                    triggeredEventsPipe.Write(ev);
+                                                                                }
                                                                             }
                                                                             else if (eventType == MemoryCallbackType.Read)
                                                                             {
-                                                                                Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                //Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
                                                                                 byte newByte = 0;
 
                                                                                 MemoryDomain domain = MemoryDomains![identifierDomain] ?? throw new Exception("unexpted memory domain");
@@ -429,7 +468,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                                                                             }
                                                                             else if(eventType == MemoryCallbackType.Write)
                                                                             {
-                                                                                Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
+                                                                                //Log.Note("Debug", $"BizHawkGameHook_{address:X}_{eventType}, eventOffset: {eventOffset}, name: {eventName}, bank: {bank:X}, bits: {string.Join(",", eventBits ?? (new int[0]))}");
 
                                                                                 if (instantaneous)
                                                                                 {
@@ -541,6 +580,9 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     if (!GameHook_SerialToEvent.ContainsKey(serialValue))
                         GameHook_SerialToEvent.Add(serialValue, new Dictionary<EventType, EventAddress>());
                     GameHook_SerialToEvent[serialValue].Add(evEventType, ev);
+                    if (!GameHook_EventEnabled.ContainsKey(evEventType))
+                        GameHook_EventEnabled.Add(evEventType, new Dictionary<EventAddress, bool>());
+                    GameHook_EventEnabled[evEventType].Add(ev, true);
 
                     break;
                 }
@@ -552,6 +594,11 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     EventType evEventType = e.EventType;
                     ulong serialValue = serial.Value;
                     EventAddress ev = GameHook_SerialToEvent[serialValue][evEventType];
+                    if (GameHook_EventEnabled.ContainsKey(evEventType) && GameHook_EventEnabled[evEventType].ContainsKey(ev))
+                        GameHook_EventEnabled[evEventType].Remove(ev);
+                    if (GameHook_EventEnabled.ContainsKey(evEventType) && GameHook_EventEnabled[evEventType].Count <= 0)
+                        GameHook_EventEnabled.Remove(evEventType);
+
                     if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
                     {
                         if ((ev.EventType & EventType.EventType_SoftReset) != 0)
@@ -563,6 +610,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                             else
                             {
                                 SoftReset = null;
+                                SoftResetEnabled = false;
                             }
                         }
                         if ((ev.EventType & EventType.EventType_HardReset) != 0)
@@ -574,6 +622,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                             else
                             {
                                 HardReset = null;
+                                HardResetEnabled = false;
                             }
                         }
                     }
@@ -603,6 +652,101 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
                     }
                     break;
                 }
+            case EventOperationType.EventOperationType_Disable:
+                {
+                    ulong? serial = e.EventSerial;
+                    if (serial == null || !GameHook_SerialToEvent.ContainsKey(serial.Value))
+                        throw new NullReferenceException(nameof(serial));
+                    EventType evEventType = e.EventType;
+                    ulong serialValue = serial.Value;
+                    EventAddress ev = GameHook_SerialToEvent[serialValue][evEventType];
+                    if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
+                    {
+                        if ((ev.EventType & EventType.EventType_SoftReset) != 0)
+                        {
+                            if (SoftReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                SoftResetEnabled = false;
+                            }
+                        }
+                        if ((ev.EventType & EventType.EventType_HardReset) != 0)
+                        {
+                            if (HardReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                HardResetEnabled = false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (GameHook_EventCallbacks == null || !GameHook_EventCallbacks.ContainsKey(ev))
+                            throw new NullReferenceException(nameof(serial));
+                        foreach (var op in GameHook_EventCallbacks[ev][evEventType])
+                        {
+                            if(GameHook_EventEnabled.ContainsKey(evEventType) && GameHook_EventEnabled[evEventType].ContainsKey(ev))
+                            {
+                                GameHook_EventEnabled[evEventType][ev] = false;
+                            }
+                        }
+                    }
+                }
+                break;
+            case EventOperationType.EventOperationType_Enable:
+                {
+                    ulong? serial = e.EventSerial;
+                    if (serial == null || !GameHook_SerialToEvent.ContainsKey(serial.Value))
+                        throw new NullReferenceException(nameof(serial));
+                    EventType evEventType = e.EventType;
+                    ulong serialValue = serial.Value;
+                    EventAddress ev = GameHook_SerialToEvent[serialValue][evEventType];
+                    if ((ev.EventType & (EventType.EventType_SoftReset | EventType.EventType_HardReset)) != 0)
+                    {
+                        if ((ev.EventType & EventType.EventType_SoftReset) != 0)
+                        {
+                            if (SoftReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                SoftResetEnabled = true;
+                            }
+                        }
+                        if ((ev.EventType & EventType.EventType_HardReset) != 0)
+                        {
+                            if (HardReset == null)
+                            {
+                                throw new NullReferenceException(nameof(serial));
+                            }
+                            else
+                            {
+                                HardResetEnabled = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (GameHook_EventCallbacks == null || !GameHook_EventCallbacks.ContainsKey(ev))
+                            throw new NullReferenceException(nameof(serial));
+                        IList<MemoryCallbackDelegate> delegates = new List<MemoryCallbackDelegate>();
+                        foreach (var op in GameHook_EventCallbacks[ev][evEventType])
+                        {
+                            if (GameHook_EventEnabled.ContainsKey(evEventType) && GameHook_EventEnabled[evEventType].ContainsKey(ev))
+                            {
+                                GameHook_EventEnabled[evEventType][ev] = true;
+                            }
+                        }
+                    }
+                }
+                break;
             default:
             case EventOperationType.EventOperationType_Undefined:
                 {
@@ -734,6 +878,7 @@ public sealed class GameHookIntegrationForm : ToolFormBase, IToolForm, IExternal
         }
         GameHook_EventCallbacks = new Dictionary<EventAddress, IDictionary<EventType, IMemoryCallback[]>>();
         GameHook_SerialToEvent = new Dictionary<ulong, IDictionary<EventType, EventAddress>>();
+        GameHook_EventEnabled = new Dictionary<EventType, IDictionary<EventAddress, bool>>();
         InstantReadCurStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
         InstantReadNewStateMap = new Dictionary<EventAddress, IDictionary<long, IDictionary<MemoryDomain, IDictionary<long, byte>>>>();
         InstantReadValues = new();

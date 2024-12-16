@@ -1,6 +1,7 @@
 ﻿using GameHook.Domain;
 using GameHook.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Xml.Schema;
@@ -36,6 +37,10 @@ namespace GameHook.Infrastructure.Drivers
         PipeClient<EventOperation>? eventsPipe = null;
         PipeClient<WriteCall>? writeCallsPipe = null;
         PipeClient<InstantReadEvents>? instantReadValuesPipe = null;
+        PipeClient<EventAddress>? triggeredEventsPipe = null;
+
+        List<IGameHookEvent> enabledEvents = [];
+        List<IGameHookEvent> disabledEvents = [];
 
         public BizhawkMemoryMapDriver(ILogger<BizhawkMemoryMapDriver> logger, AppSettings appSettings)
         {
@@ -162,7 +167,21 @@ namespace GameHook.Infrastructure.Drivers
             {
                 throw;
             }
-            
+
+            try
+            {
+                triggeredEventsPipe = new("GAMEHOOK_BIZHAWK_TRIGGERED_EVENTS.pipe", x => EventAddress.Deserialize(x));
+                triggeredEventsPipe.PipeReadEvent += OnEventTriggered;
+            }
+            catch (FileNotFoundException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -176,12 +195,27 @@ namespace GameHook.Infrastructure.Drivers
                 IGameHookEvent? ev = eventsLookup.Where(x => x.SerialNumber == eventAddress.SerialNumber).DefaultIfEmpty(null).FirstOrDefault();
                 if(ev != null && ev.Property != null && ev.Property.Instantaneous != null && ev.Property.Instantaneous.Value && ev.Property.ImmediateWriteBytes != null)
                 {
-                    foreach (byte[] value in values)
+                    try
                     {
-                        ev.Property.ImmediateWriteBytes.Add(value);
+                        ev.Property.ImediateWriteBytesLock();
+                        foreach (byte[] value in values)
+                        {
+                            ev.Property.ImmediateWriteBytes.Add(value);
+                        }
+                    }
+                    finally
+                    {
+                        ev.Property.ImediateWriteBytesUnlock();
                     }
                 }
             }
+        }
+
+        private void OnEventTriggered(object? sender, PipeBase<EventAddress>.PipeReadArgs e)
+        {
+            EventAddress eventAddress = e.Arg;
+            IGameHookEvent? ev = eventsLookup.Where(x => x.SerialNumber == eventAddress.SerialNumber).DefaultIfEmpty(null).FirstOrDefault();
+            ev.Triggered = true;
         }
 
         void EventPipeConnectedHandler(object sender, PipeConnectedArgs e)
@@ -351,6 +385,116 @@ namespace GameHook.Infrastructure.Drivers
             {
                 throw;
             }
+        }
+
+        public Task EnableEvent(EventType eventType, IGameHookEvent eventObj)
+        {
+            if (eventsPipe == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            if (eventObj == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            try
+            {
+                List<EventAddressRegisterOverride> eventAddressRegisterOverrides = [];
+                foreach (var over in eventObj.EventRegisterOverrides)
+                {
+                    string registerValue = over?.Register ?? throw new NullReferenceException(nameof(over.Register));
+                    string overValue = over?.Value?.ToString() ?? throw new NullReferenceException(nameof(over.Value));
+                    eventAddressRegisterOverrides.Add(new EventAddressRegisterOverride(registerValue, ulong.Parse(overValue)));
+                }
+                string? name = eventObj.Name;
+                bool active = true;
+                long address = (eventObj.Address != null) ? eventObj.Address.Value : 0;
+                ushort bank = (eventObj.Bank != null) ? eventObj.Bank.Value : ushort.MaxValue;
+                string? bits = eventObj.Bits;
+                int length = (eventObj.Length != null) ? eventObj.Length.Value : 0;
+                int size = eventObj.Size != null ? eventObj.Size.Value : 0;
+                bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
+                ulong serialNumber = eventObj?.SerialNumber ?? 0;
+
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Enable, eventType, serialNumber, new EventAddress(serialNumber, name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+
+                DisabledEvents.Add(eventObj);
+                return Task.CompletedTask;
+            }
+            catch (IOException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+        }
+
+        public Task DisableEvent(EventType eventType, IGameHookEvent eventObj)
+        {
+            if (eventsPipe == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            if (eventObj == null)
+            {
+                throw new NullReferenceException(nameof(eventsPipe));
+            }
+            try
+            {
+                List<EventAddressRegisterOverride> eventAddressRegisterOverrides = [];
+                foreach (var over in eventObj.EventRegisterOverrides)
+                {
+                    string registerValue = over?.Register ?? throw new NullReferenceException(nameof(over.Register));
+                    string overValue = over?.Value?.ToString() ?? throw new NullReferenceException(nameof(over.Value));
+                    eventAddressRegisterOverrides.Add(new EventAddressRegisterOverride(registerValue, ulong.Parse(overValue)));
+                }
+                string? name = eventObj.Name;
+                bool active = true;
+                long address = (eventObj.Address != null) ? eventObj.Address.Value : 0;
+                ushort bank = (eventObj.Bank != null) ? eventObj.Bank.Value : ushort.MaxValue;
+                string? bits = eventObj.Bits;
+                int length = (eventObj.Length != null) ? eventObj.Length.Value : 0;
+                int size = eventObj.Size != null ? eventObj.Size.Value : 0;
+                bool instantaneous = (eventObj?.Property?.Instantaneous != null) && eventObj.Property.Instantaneous.Value;
+                ulong serialNumber = eventObj?.SerialNumber ?? 0;
+
+                eventsPipe.Write(new EventOperation(EventOperationType.EventOperationType_Disable, eventType, serialNumber, new EventAddress(serialNumber, name, active, address, bank, eventType, eventAddressRegisterOverrides.AsEnumerable(), bits, length, size, instantaneous)));
+
+                DisabledEvents.Add(eventObj);
+                return Task.CompletedTask;
+            }
+            catch (IOException ex)
+            {
+                throw new VisibleException("Can't establish a communication with BizHawk. Is Bizhawk open? Is the GameHook integration tool running?", ex);
+            }
+            catch
+            {
+                throw;
+            }
+        }
+
+        public List<IGameHookEvent> EnabledEvents
+        {
+            get
+            {
+                return enabledEvents;
+            }
+        }
+        public List<IGameHookEvent> DisabledEvents
+        {
+            get
+            {
+                return disabledEvents;
+            }
+        }
+
+        public Task ClearEnabledDisabledEvents()
+        {
+            enabledEvents.Clear();
+            disabledEvents.Clear();
+            return Task.CompletedTask;
         }
     }
 }

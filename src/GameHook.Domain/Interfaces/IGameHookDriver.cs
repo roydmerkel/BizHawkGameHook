@@ -23,6 +23,13 @@ namespace GameHook.Domain.Interfaces
         Task AddEvent(EventType eventType, IGameHookEvent eventObj);
 
         Task RemoveEvent(EventType eventType, IGameHookEvent eventObj);
+
+        Task EnableEvent(EventType eventType, IGameHookEvent eventObj);
+
+        Task DisableEvent(EventType eventType, IGameHookEvent eventObj);
+        List<IGameHookEvent> EnabledEvents { get; }
+        List<IGameHookEvent> DisabledEvents { get; }
+        Task ClearEnabledDisabledEvents();
     }
 
     public interface IBizhawkMemoryMapDriver : IGameHookDriver { }

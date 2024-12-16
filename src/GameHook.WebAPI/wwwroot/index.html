@@ -139,6 +139,12 @@
                             <tree-view-item :obj="this.mapper.properties" depth="0" />
                         </div>
                     </div>
+                    <div class="gh-panel gh-events-panel">
+                        <div class="gh-panel-header">All Events</div>
+                        <div class="gh-panel-content">
+                            <event-view-item :obj="this.mapper.events" depth="0" />
+                        </div>
+                    </div>
                 </div>
 
                 <div class="column is-6">
@@ -511,6 +517,21 @@
           </div>`
     }
 
+    const enableDisableBtnComponent = {
+        props: ['event'],
+        template: `
+      <div class="cmd-button" v-on:click="$root.enableEvent(event)" v-if="event.enabled">
+      <svg class="sprite active">
+        <use xlink:href="#snowflake"></use>
+      </svg>
+      </div>
+      <div class="cmd-button" v-on:click="$root.enableEvent(event)" v-else>
+      <svg class="sprite">
+        <use xlink:href="#snowflake-disabled"></use>
+      </svg>
+      </div>`
+    }
+
     const bytesEditorComponent = {
         props: ['editingProperty'],
         computed: {
@@ -552,7 +573,7 @@
         },
         methods: {
             isObjectTypeOfProperty: function (obj) {
-                return Object.keys(obj).includes('path')
+                return obj != null && Object.keys(obj).includes('path')
             },
             displayPropertyValue: function (prop) {
                 return this.$root.displayPropertyValue(prop, true)
@@ -590,6 +611,49 @@
           </div>`
     }
 
+    const eventViewItemComponent = {
+            props: ['depth', 'key', 'obj'],
+            data() {
+                return {
+                    open: (this.depth == 0) ? true : false,
+                    cssPropsChildren: {
+                        marginLeft: this.depth == 0 ? '' : 16 + 'px'
+                    }
+                }
+            },
+            methods: {
+                isObjectTypeOfEvent: function (obj) {
+                    return obj != null && Object.keys(obj).includes('name')
+                }
+            },
+            template: `
+              <div v-show="depth != 0" class="treeitem-node" v-on:click="open = !open">
+              <svg class="sprite" v-if="open == false">
+                <use xlink:href="#folder"></use>
+              </svg>
+              <svg class="sprite" v-if="open == true">
+                <use xlink:href="#folder-open"></use>
+              </svg>
+
+              <span class="has-text-weight-semibold pl-2"><slot></slot></span>
+              </div>
+
+              <div v-show="open == true" v-for="key in Object.keys(obj)" :style="cssPropsChildren">
+              <template v-if="isObjectTypeOfEvent(obj[key])">
+                <div class="treeitem-node">
+                  <span class="has-text-weight-normal">{{ key }}:</span>
+
+                  <div class="commands">
+                    <description-btn :property="obj[key]"></description-btn>
+                    <enable-disable-btn :event="obj[key]"/>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <tree-view-item key="key" :obj="obj[key]" :depth="parseInt(this.depth) + 1">{{ key }}</tree-view-item>
+              </template>
+              </div>`
+    }
     const app = Vue.createApp({
         data() {
             return {
@@ -665,6 +729,8 @@
             decimalToHexdecimal: GameHookMapperClient.decimalToHexdecimal,
 
             displayBytes: function (bytes, forceMode) {
+                if (bytes == null) return ""
+
                 const mode = forceMode ?? this.userSettings.displayBytesMode
 
                 if (mode === 'decimal') {
@@ -806,6 +872,12 @@
             freezeProperty: function (property) {
                 property.freeze(!property.isFrozen)
             },
+            enableEvent: function (event) {
+                if(!event.enabled)
+                    event.enable()
+                else
+                    event.disable()
+            },
             getGlossaryByReferenceKey: function (reference) {
                 return Object.keys(this.mapper.glossary[reference]).map(key => ({
                     key: parseInt(key),
@@ -866,10 +938,12 @@
     })
 
     app.component('tree-view-item', treeViewItemComponent)
+    app.component('event-view-item', eventViewItemComponent)
     app.component('description-btn', descriptionBtnComponent)
     app.component('freeze-property-btn', freezePropertyBtnComponent)
     app.component('pin-property-btn', pinPropertyBtnComponent)
     app.component('edit-property-btn', editPropertyBtnComponent)
+    app.component('enable-disable-btn', enableDisableBtnComponent)
     app.component('bytes-editor', bytesEditorComponent)
     app.component('error-hint', errorHintComponent)
     app.component('loading-spinner', loadingComponent)

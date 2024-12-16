@@ -2,7 +2,9 @@ using GameHook.Application;
 using GameHook.Domain;
 using GameHook.Domain.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Swashbuckle.AspNetCore.Annotations;
+using System.Drawing;
 using System.Text.Json.Serialization;
 
 namespace GameHook.WebAPI.Controllers
@@ -30,6 +32,22 @@ namespace GameHook.WebAPI.Controllers
                 IsReadOnly = x.IsReadOnly,
             };
 
+        public static EventItemModel MapToEventModel(this IGameHookEvent x) =>
+            new()
+            {
+                Name = x.Name,
+                MemoryContainer = x.MemoryContainer,
+
+                Address = x.Address,
+                Bank = x.Bank,
+                EventType = x.EventType.ToString(),
+                Description = x.Description,
+                Length = x.Length,
+                Size = x.Size,
+                Bits = x.Bits,
+                Enabled = x.Enabled,
+            };
+
         public static Dictionary<string, IEnumerable<GlossaryItemModel>> MapToDictionaryGlossaryItemModel(
             this IEnumerable<ReferenceItems> glossaryList)
         {
@@ -52,6 +70,7 @@ namespace GameHook.WebAPI.Controllers
     {
         public MapperMetaModel Meta { get; init; } = null!;
         public IEnumerable<PropertyModel> Properties { get; init; } = null!;
+        public IEnumerable<EventItemModel> Events { get; init; } = null!;
         public Dictionary<string, IEnumerable<GlossaryItemModel>> Glossary { get; init; } = null!;
     }
 
@@ -61,6 +80,21 @@ namespace GameHook.WebAPI.Controllers
         public string GameName { get; init; } = string.Empty;
         public string GamePlatform { get; init; } = string.Empty;
         public string MapperVersion { get; init; } = string.Empty;
+    }
+
+    public class EventItemModel
+    {
+        public string Name { get; init; } = string.Empty;
+        public string? MemoryContainer { get; init; }
+        public uint? Address { get; init; }
+        public ushort? Bank { get; init; }
+
+        public string? EventType { get; init; }
+        public string? Description { get; init; }
+        public int? Length { get; init; }
+        public int? Size { get; init;  }
+        public string? Bits { get; init;  }
+        public bool? Enabled { get; init; }
     }
 
     public class GlossaryItemModel
@@ -160,6 +194,7 @@ namespace GameHook.WebAPI.Controllers
                     MapperVersion = _mapperUpdateManager.MapperVersion
                 },
                 Properties = Instance.Mapper.Properties.Values.Select(x => x.MapToPropertyModel()).ToArray(),
+                Events = Instance.Mapper.Events.Values.Select(x => x.MapToEventModel()).ToArray(),
                 Glossary = Instance.Mapper.References.Values.MapToDictionaryGlossaryItemModel()
             };
 
@@ -381,6 +416,76 @@ namespace GameHook.WebAPI.Controllers
                     Value = x.Value
                 }));
             }
+        }
+
+        [HttpGet("events")]
+        [SwaggerOperation("Returns the events section of the mapper file.")]
+        public ActionResult<Dictionary<string, Dictionary<string, GlossaryItemModel>>> GetEvents()
+        {
+            if (Instance.Initalized == false || Instance.Mapper == null)
+                return ApiHelper.MapperNotLoaded();
+
+            return Ok(Instance.Mapper.Events.Values.Select(x => x.MapToEventModel()));
+        }
+
+        [HttpGet("events/{name}")]
+        [SwaggerOperation("Returns a specific event by it's key.")]
+        public ActionResult<IEnumerable<EventItemModel>> GetEventPage(string name)
+        {
+            if (Instance.Initalized == false || Instance.Mapper == null)
+                return ApiHelper.MapperNotLoaded();
+
+            name = name.StripEndingRoute();
+
+            var eventItem = Instance.Mapper.Events[name];
+            if (eventItem == null)
+            {
+                return NotFound();
+            }
+            else
+            {
+                return Ok(eventItem.MapToEventModel());
+            }
+        }
+
+        [HttpGet("events/{name}/enable")]
+        [SwaggerOperation("Enables an event..")]
+        public ActionResult EnableEvent(string name)
+        {
+            if (Instance.Initalized == false || Instance.Mapper == null)
+                return ApiHelper.MapperNotLoaded();
+
+            name = name.StripEndingRoute().FromRouteToPath();
+
+            var eventItem = Instance.Mapper.Events[name];
+
+            if (eventItem == null)
+            {
+                return NotFound();
+            }
+
+            eventItem.EnableEvent();
+            return Ok();
+        }
+
+        [HttpGet("events/{name}/disable")]
+        [SwaggerOperation("Enables an event..")]
+        public ActionResult DisableEvent(string name)
+        {
+            if (Instance.Initalized == false || Instance.Mapper == null)
+                return ApiHelper.MapperNotLoaded();
+
+            name = name.StripEndingRoute().FromRouteToPath();
+
+            var eventItem = Instance.Mapper.Events[name];
+
+            if (eventItem == null)
+            {
+                return NotFound();
+            }
+
+            eventItem.DisableEvent();
+            return Ok();
         }
     }
 }

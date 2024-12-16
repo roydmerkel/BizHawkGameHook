@@ -41,6 +41,10 @@
         bool? Instantaneous { get;  }
         IList<byte[]>? ImmediateWriteBytes { get; }
         IList<object?>? ImmediateWriteValues { get; }
+        void ImediateWriteBytesLock();
+        void ImediateWriteBytesUnlock();
+        void FieldsChangedLock();
+        void FieldsChangedUnlock();
 
         IGameHookEvent? GameHookEvent { get; }
 

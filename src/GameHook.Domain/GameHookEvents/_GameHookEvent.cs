@@ -17,6 +17,8 @@ namespace GameHook.Domain.GameHookEvents
             Length = attributes?.Length;
             Size = attributes?.Size;
             Bits = attributes?.Bits;
+            Triggered = false;
+            Enabled = true;
 
             MemoryContainer = attributes?.MemoryContainer;
             Description = attributes?.Description;
@@ -70,8 +72,11 @@ namespace GameHook.Domain.GameHookEvents
             Address = address;
         }
 
-        public abstract void ClearEvent(IGameHookEvent ev);
-        public abstract void SetEvent(IGameHookEvent ev);
+        public abstract void ClearEvent();
+        public abstract void SetEvent();
+
+        public abstract void DisableEvent();
+        public abstract void EnableEvent();
 
         public void UpdateAddressFromProperty()
         {
@@ -79,19 +84,19 @@ namespace GameHook.Domain.GameHookEvents
             {
                 if(Property.Address == null && _oldAddress != null)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = Property.Address;
                 } 
                 else if(Property.Address != null && _oldAddress == null)
                 {
                     _oldAddress = Property.Address;
-                    SetEvent(this);
+                    SetEvent();
                 }
                 else if(Property.Address != null && _oldAddress != null && Property.Address.Value != _oldAddress.Value)
                 {
-                    ClearEvent(this);
+                    ClearEvent();
                     _oldAddress = Property.Address;
-                    SetEvent(this);
+                    SetEvent();
                 }
             }
         }

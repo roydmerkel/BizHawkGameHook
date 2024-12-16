@@ -7,6 +7,7 @@ using System.Xml.Linq;
 using GameHook.Domain.GameHookEvents;
 using System.Diagnostics.Contracts;
 using Esprima.Ast;
+using System.Linq;
 
 namespace GameHook.Application
 {
@@ -115,12 +116,12 @@ namespace GameHook.Application
                             Instantaneous = x.GetOptionalAttributeValueAsBool("instantaneous"),
                         };
 
-                        if (type == "binaryCodedDecimal") return new BinaryCodedDecimalProperty(instance, variables);
-                        else if (type == "bitArray") return new BitFieldProperty(instance, variables);
-                        else if (type == "bool") return new BooleanProperty(instance, variables);
-                        else if (type == "int") return new IntegerProperty(instance, variables);
-                        else if (type == "string") return new StringProperty(instance, variables);
-                        else if (type == "uint") return new UnsignedIntegerProperty(instance, variables);
+                        if (type == "binaryCodedDecimal") return new BinaryCodedDecimalProperty(instance.Logger, instance, variables);
+                        else if (type == "bitArray") return new BitFieldProperty(instance.Logger, instance, variables);
+                        else if (type == "bool") return new BooleanProperty(instance.Logger, instance, variables);
+                        else if (type == "int") return new IntegerProperty(instance.Logger, instance, variables);
+                        else if (type == "string") return new StringProperty(instance.Logger, instance, variables);
+                        else if (type == "uint") return new UnsignedIntegerProperty(instance.Logger, instance, variables);
                         else throw new Exception($"Unknown property type {type}.");
                     }
                     catch (Exception ex)
@@ -174,7 +175,7 @@ namespace GameHook.Application
                         {
                             return new HardResetEvent(instance, variables);
                         }
-                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_hardreset", StringComparison.InvariantCultureIgnoreCase))
+                        else if (x != null && x.Attribute("name") != null && x.Attribute("name")!.Value.Equals("_softreset", StringComparison.InvariantCultureIgnoreCase))
                         {
                             return new SoftResetEvent(instance, variables);
                         }

@@ -1,8 +1,9 @@
 ﻿using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class IntegerProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables)
+    public class IntegerProperty(ILogger logger, IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(logger, instance, variables)
     {
         protected override byte[] FromValue(string value)
         {

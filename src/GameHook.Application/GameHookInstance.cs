@@ -20,6 +20,7 @@ namespace GameHook.Application
         private IEnumerable<MemoryAddressBlock>? BlocksToRead { get; set; }
         public List<IClientNotifier> ClientNotifiers { get; }
         public bool Initalized { get; private set; }
+        public ILogger<IGameHookInstance> Logger => _logger;
         public IGameHookDriver? Driver { get; private set; }
         public IGameHookMapper? Mapper { get; private set; }
         public IPlatformOptions? PlatformOptions { get; private set; }
@@ -266,7 +267,9 @@ namespace GameHook.Application
             // Setup at start of loop
             foreach (var property in Mapper.Properties.Values)
             {
+                property.FieldsChangedLock();
                 property.FieldsChanged.Clear();
+                property.FieldsChangedUnlock();
             }
 
             // Preprocessor
@@ -321,7 +324,26 @@ namespace GameHook.Application
             // Fields Changed
             FieldsChangedStopwatch.Restart();
 
-            var propertiesChanged = Mapper.Properties.Values.Where(x => x.FieldsChanged.Count != 0).ToArray();
+            IGameHookProperty[] properties = [.. Mapper.Properties.Values];
+
+            var propertiesChangedList = new List<IGameHookProperty>();
+            foreach (var property in properties)
+            {
+                try
+                {
+                    property.FieldsChangedLock();
+                    if (property.FieldsChanged.Count != 0)
+                    {
+                        propertiesChangedList.Add(property);
+                    }
+                }
+                finally
+                {
+                    property.FieldsChangedUnlock();
+                }
+            }
+
+            var propertiesChanged = propertiesChangedList.ToArray();
             if (propertiesChanged.Length > 0)
             {
                 try
@@ -354,6 +376,73 @@ namespace GameHook.Application
                     throw new PropertyProcessException($"Could not send {immediateWriteValuesChanged.Length} property immediate write events.", ex);
                 }
             }
+
+            var eventsTriggered = Mapper.Events.Values.Where(x => x.Triggered != null && x.Triggered.Value).ToArray();
+            if(eventsTriggered.Length > 0)
+            {
+                try
+                {
+                    Console.WriteLine("eventsTriggered:" + eventsTriggered.Length.ToString());
+                    foreach (var notifier in ClientNotifiers)
+                    {
+                        await notifier.SendTriggeredEvents(eventsTriggered);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Could not send {eventsTriggered.Length} triggered events.");
+                    throw new PropertyProcessException($"Could not send {eventsTriggered.Length} triggred events.", ex);
+                }
+                foreach(var eventTriggered in eventsTriggered)
+                {
+                    eventTriggered.Triggered = false;
+                }
+            }
+
+            var eventsEnabled = Driver.EnabledEvents.ToArray();
+            if (eventsEnabled.Length > 0)
+            {
+                try
+                {
+                    Console.WriteLine("eventsEnabled:" + eventsEnabled.Length.ToString());
+                    foreach (var notifier in ClientNotifiers)
+                    {
+                        await notifier.SendEnabledEvents(eventsEnabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Could not send {eventsTriggered.Length} triggered events.");
+                    throw new PropertyProcessException($"Could not send {eventsTriggered.Length} triggred events.", ex);
+                }
+                foreach (var eventTriggered in eventsTriggered)
+                {
+                    eventTriggered.Triggered = false;
+                }
+            }
+            
+            var eventsDisabled = Driver.DisabledEvents.ToArray();
+            if (eventsDisabled.Length > 0)
+            {
+                try
+                {
+                    Console.WriteLine("eventsDisabled:" + eventsDisabled.Length.ToString());
+                    foreach (var notifier in ClientNotifiers)
+                    {
+                        await notifier.SendDisabledEvents(eventsDisabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Could not send {eventsTriggered.Length} triggered events.");
+                    throw new PropertyProcessException($"Could not send {eventsTriggered.Length} triggred events.", ex);
+                }
+                foreach (var eventTriggered in eventsTriggered)
+                {
+                    eventTriggered.Triggered = false;
+                }
+            }
+            await Driver.ClearEnabledDisabledEvents();
 
             FieldsChangedStopwatch.Stop();
 

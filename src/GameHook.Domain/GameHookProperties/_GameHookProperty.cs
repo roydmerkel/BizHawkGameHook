@@ -1,13 +1,20 @@
 ﻿using GameHook.Domain.GameHookEvents;
 using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 using System.Collections;
 
 namespace GameHook.Domain.GameHookProperties
 {
     public abstract partial class GameHookProperty : IGameHookProperty
     {
-        public GameHookProperty(IGameHookInstance instance, PropertyAttributes attributes)
+        private readonly ILogger _logger;
+
+        public GameHookProperty(ILogger logger, IGameHookInstance instance, PropertyAttributes attributes)
         {
+            _logger = logger;
+            _immediateWriteBytesLock = new object();
+            _fieldsChangedLock = new object();
+
             Instance = instance;
             Path = attributes.Path;
             Type = attributes.Type;
@@ -24,9 +31,8 @@ namespace GameHook.Domain.GameHookProperties
             Bytes = null;
             BytesFrozen = null;
             Instantaneous = attributes.Instantaneous;
-            _immediateWriteBytesLock = new object();
-            ImmediateWriteBytes = new InstantWriteBytes<byte[]>(this, _immediateWriteBytesLock, "immediateWriteBytes");
-            ImmediateWriteValues = new InstantWriteBytes<object?>(this, _immediateWriteBytesLock, "immediateWriteValues");
+            ImmediateWriteBytes = new InstantWriteBytes<byte[]>(this, ImediateWriteBytesLock, ImediateWriteBytesUnlock, FieldsChangedLock, FieldsChangedUnlock, "immediateWriteBytes");
+            ImmediateWriteValues = new InstantWriteBytes<object?>(this, ImediateWriteBytesLock, ImediateWriteBytesUnlock, FieldsChangedLock, FieldsChangedUnlock, "immediateWriteValues");
 
             ReadFunction = attributes.ReadFunction;
             WriteFunction = attributes.WriteFunction;

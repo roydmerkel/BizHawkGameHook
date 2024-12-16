@@ -1,10 +1,30 @@
 ﻿using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 using NCalc;
 
 namespace GameHook.Utility.BuildMapperBindings
 {
+    internal class Logger : ILogger<IGameHookInstance>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+        }
+    };
+
     internal class GameHookFakeInstance : IGameHookInstance
     {
+        public ILogger<IGameHookInstance> Logger => new Logger();
+
         public bool Initalized => throw new NotImplementedException();
 
         public Dictionary<string, object?> State => throw new NotImplementedException();

@@ -16,18 +16,36 @@ namespace GameHook.Domain.GameHookEvents
             Size = 0;
         }
 
-        public override void ClearEvent(IGameHookEvent ev)
+        public override void ClearEvent()
         {
             if (Instance != null && Instance.Driver != null)
             {
                 Instance.Driver.RemoveEvent(EventType.EventType_HardReset, this);
             }
         }
-        public override void SetEvent(IGameHookEvent ev)
+        public override void SetEvent()
         {
             if (Instance != null && Instance.Driver != null)
             {
                 Instance.Driver.AddEvent(EventType.EventType_HardReset, this);
+            }
+        }
+
+        public override void DisableEvent()
+        {
+            Enabled = false;
+            if (Instance != null && Instance.Driver != null)
+            {
+                Instance.Driver.DisableEvent(EventType.EventType_HardReset, this);
+            }
+        }
+
+        public override void EnableEvent()
+        {
+            Enabled = true;
+            if (Instance != null && Instance.Driver != null)
+            {
+                Instance.Driver.EnableEvent(EventType.EventType_HardReset, this);
             }
         }
     }

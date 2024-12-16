@@ -1,9 +1,10 @@
 ﻿using GameHook.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 using System.Collections;
 
 namespace GameHook.Domain.GameHookProperties
 {
-    public class BitFieldProperty(IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(instance, variables), IGameHookProperty
+    public class BitFieldProperty(ILogger logger, IGameHookInstance instance, PropertyAttributes variables) : GameHookProperty(logger, instance, variables), IGameHookProperty
     {
         protected override byte[] FromValue(string value)
         {

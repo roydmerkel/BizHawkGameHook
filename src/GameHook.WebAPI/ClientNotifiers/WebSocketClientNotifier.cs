@@ -50,5 +50,59 @@ namespace GameHook.WebAPI.ClientNotifiers
                 immediateWriteValues = x.ImmediateWriteValues
             }).ToArray());
         }
+
+        public async Task SendTriggeredEvents(IEnumerable<IGameHookEvent> events)
+        {
+            await _hubContext.Clients.All.SendAsync("TriggeredEvents", events.Select(x => new
+            {
+                name = x.Name,
+                memoryContainer = x.MemoryContainer,
+                address = x.Address,
+                bank = x.Bank,
+                eventType = x.EventType,
+                description = x.Description,
+                length = x.Length,
+                size = x.Size,
+                bits = x.Bits,
+                triggered = x.Triggered,
+                enabled = x.Enabled,
+        }).ToArray());
+        }
+
+        public async Task SendEnabledEvents(IEnumerable<IGameHookEvent> events)
+        {
+            await _hubContext.Clients.All.SendAsync("EnabledEvents", events.Select(x => new
+            {
+                name = x.Name,
+                memoryContainer = x.MemoryContainer,
+                address = x.Address,
+                bank = x.Bank,
+                eventType = x.EventType,
+                description = x.Description,
+                length = x.Length,
+                size = x.Size,
+                bits = x.Bits,
+                triggered = x.Triggered,
+                enabled = x.Enabled,
+            }).ToArray());
+        }
+
+        public async Task SendDisabledEvents(IEnumerable<IGameHookEvent> events)
+        {
+            await _hubContext.Clients.All.SendAsync("DisabledEvents", events.Select(x => new
+            {
+                name = x.Name,
+                memoryContainer = x.MemoryContainer,
+                address = x.Address,
+                bank = x.Bank,
+                eventType = x.EventType,
+                description = x.Description,
+                length = x.Length,
+                size = x.Size,
+                bits = x.Bits,
+                triggered = x.Triggered,
+                enabled = x.Enabled,
+            }).ToArray());
+        }
     }
 }
